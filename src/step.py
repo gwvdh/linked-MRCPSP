@@ -33,7 +33,6 @@ def step_model(n, T, M, R, E, p, L, r, VP, silent=True):
     model = gp.Model("step")
     if silent:
         model.setParam('OutputFlag', False)
-    last_dummy = model.addVars(T, vtype=GRB.BINARY, name="last_dummy")
 
     # Step variables
     step_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
@@ -41,6 +40,7 @@ def step_model(n, T, M, R, E, p, L, r, VP, silent=True):
 
     # Objective
     model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
+
     # Constraints
     # Schedule each job exactly once
     model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M)) == 1 for i in range(n)), name="schedule")
@@ -60,10 +60,7 @@ def step_model(n, T, M, R, E, p, L, r, VP, silent=True):
                      for t in range(T) for k in range(len(R))), name="resource")
 
     # Linked modes of jobs (i,j)
-    # model.addConstrs((z[i, 0, T-1] == 1 for i in range(n)), name="schedule")
     model.addConstrs((z[i, m, T-1] == z[j, m, T-1] for i,j in L for m in range(M)), name="linked")
-    # model.addConstrs((gp.quicksum((z[i, m, t] - z[i, m, t-1]) for t in range(1,T)) <= gp.quicksum((z[j, m, t] - z[j, m, t-1]) for t in range(1,T)) 
-    #                   for i,j in L for m in range(M)), name="linked")
     
     # Earliest start times
     model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="earliest_start_times")
@@ -98,10 +95,9 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, VP, silent=True):
     latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
 
     # Initialize model
-    model = gp.Model("step")
+    model = gp.Model("step_disaggregated")
     if silent:
         model.setParam('OutputFlag', False)
-    last_dummy = model.addVars(T, vtype=GRB.BINARY, name="last_dummy")
 
     # Step variables
     step_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
@@ -118,21 +114,13 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, VP, silent=True):
 
     # Precedence relations between jobs (i,j)
     model.addConstrs((gp.quicksum(z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0 for m in range(M)) >= gp.quicksum(z[j, m, t] for m in range(M)) for i,j in E for t in range(1,T)), name="precedence_disaggregated")
-    # model.addConstrs((
-        # gp.quicksum((t + p[i][m]) * (z[i, m, t] - z[i, m, t-1]) for m in range(M) for t in range(1,T)) <= 
-        # gp.quicksum(t * (z[j, m, t] - z[j, m, t-1]) for m in range(M) for t in range(1,T))
-        # for i,j in E), 
-        # name="precedence")
 
     # Resource availability
     model.addConstrs((gp.quicksum(r[i][m][k] * (z[i, m, t] - (z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0)) for m in range(M) for i in range(n)) <= R[k] 
                      for t in range(T) for k in range(len(R))), name="resource")
 
     # Linked modes of jobs (i,j)
-    # model.addConstrs((z[i, 0, T-1] == 1 for i in range(n)), name="schedule")
     model.addConstrs((z[i, m, T-1] == z[j, m, T-1] for i,j in L for m in range(M)), name="linked")
-    # model.addConstrs((gp.quicksum((z[i, m, t] - z[i, m, t-1]) for t in range(1,T)) <= gp.quicksum((z[j, m, t] - z[j, m, t-1]) for t in range(1,T)) 
-    #                   for i,j in L for m in range(M)), name="linked")
     
     # Earliest start times
     model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="earliest_start_times")

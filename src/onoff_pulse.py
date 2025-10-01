@@ -95,7 +95,7 @@ def onoff_pulse_model_disaggregated(n, T, M, R, E, p, L, r, VP, silent=True):
     latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
 
     # Initialize model
-    model = gp.Model("onoff_pulse")
+    model = gp.Model("onoff_pulse_disaggregated")
     if silent:
         model.setParam('OutputFlag', False)
 
@@ -147,9 +147,8 @@ if __name__ == "__main__":
     else: 
         print("\033[92mModel feasible\033[0m")
         print(f"\033[1mRunning time: {time.time() - start_time:.3f} s\033[0m")
-        for key, val in model.getAttr("x", x).items():
-            if val > 0:
-                print(f"{key}: {val} \t p: {input['p'][int(key[0])][int(key[1])]}")
+        for var in model.getVars():
+            print(f"{var.varName}: {var.x}") if var.x > 0 else None
         print(f"Objective: {model.objVal * divisor}")
         
         

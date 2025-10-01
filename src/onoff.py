@@ -44,7 +44,6 @@ def onoff_model(n, T, M, R, E, p, L, r, VP, silent=True):
     # Constraints
     # Schedule each job exactly once (schedule dummy separately, since p[n-1][m] = 0)
     model.addConstrs((gp.quicksum(y[i, m, t]/p[i][m] if p[i][m] > 0 else y[i, m, t] for m in range(M) for t in range(T) ) == 1 for i in range(1,n-1)), name="schedule")
-    # model.addConstrs((gp.quicksum(y[i, m, t] for m in range(M) for t in range(T) if p[i][m]==0) == 1 for i in range(n)), name="schedule_dummy")
     model.addConstr((gp.quicksum(y[0, m, t] for m in range(M) for t in range(T)) == 1), name="schedule_first")
     model.addConstr((gp.quicksum(y[n-1, m, t] for m in range(M) for t in range(T)) == 1), name="schedule_last")
 

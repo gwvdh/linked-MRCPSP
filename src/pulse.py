@@ -44,8 +44,6 @@ def pulse_model(n, T, M, R, E, p, L, r, VP, silent=True):
     # Constraints
     # Schedule job exactly once
     model.addConstrs((x.sum(i, "*", "*") == 1 for i in range(n)), name="schedule")
-    # for i in range(n):
-    #     pulse_model.addConstr(gp.quicksum(gp.quicksum(x[i, m, t] for m in range(M)) for t in range(T)) == 1, "schedule")
 
     # Precedence relations between jobs (i,j)
     model.addConstrs((
@@ -92,7 +90,7 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, VP, silent=True):
     latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
 
     # Initialize model
-    model = gp.Model("pulse")
+    model = gp.Model("pulse_disaggregated")
     if silent:
         model.setParam('OutputFlag', False)
 
@@ -106,8 +104,6 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, VP, silent=True):
     # Constraints
     # Schedule job exactly once
     model.addConstrs((x.sum(i, "*", "*") == 1 for i in range(n)), name="schedule")
-    # for i in range(n):
-    #     pulse_model.addConstr(gp.quicksum(gp.quicksum(x[i, m, t] for m in range(M)) for t in range(T)) == 1, "schedule")
 
     # Precedence relations between jobs (i,j)
     model.addConstrs((
@@ -141,9 +137,8 @@ if __name__ == "__main__":
     else: 
         print("\033[92mModel feasible\033[0m")
         print(f"\033[1mRunning time: {time.time() - start_time:.3f} s\033[0m")
-        for key, val in model.getAttr("x", x).items():
-            if val > 0:
-                print(f"{key}: {val} \t p: {input['p'][int(key[0])][int(key[1])]}")
+        for var in model.getVars():
+            print(f"{var.varName}: {var.x}") if var.x > 0 else None
         print(f"Objective: {model.objVal * divisor}")
         
         
