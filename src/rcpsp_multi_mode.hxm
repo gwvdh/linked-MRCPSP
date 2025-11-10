@@ -1,0 +1,160 @@
+use io;
+use json;
+
+function input() {
+    local usage = "Usage: hexaly rcpsp_multi_mode.hxm inFileName=instanceFile "
+            + "[outFileName=outputFile] [hxTimeLimit=timeLimit]";
+    if (inFileName == nil) throw usage;
+
+    readInput();
+}
+
+function model() {
+    // Optional interval decisions: time range of each task in each mode
+    tasksInMode[task in 0...data["n"]][mode in 0...data["M"]] <- optionalInterval(0, data["T"]);
+    presentMode[task in 0...data["n"]][mode in 0...data["M"]] <- presence(tasksInMode[task][mode]);
+
+    // Hull
+    tasks[task in 0...data["n"]] <- hull[mode in 0...data["M"]](tasksInMode[task][mode]);
+
+    // Constraints: Task duration
+    for [task in 0...data["n"]][mode in 0...data["M"]] {
+        constraint presentMode[task][mode] ? length(tasksInMode[task][mode]) == data["p"][task][mode] : 1;
+    }
+
+    // Constraints: Task mode identities
+    for [link in data["L"]][mode in 0...data["M"]] {
+        constraint presentMode[link[0]][mode] == presentMode[link[1]][mode];
+    }
+
+    // Constraints: Precedence between tasks
+    for [precedence in data["E"]] {
+        constraint tasks[precedence[0]] < tasks[precedence[1]];
+    }
+
+    // Constraints: Exactly one active mode for each task
+    for [task in 0...data["n"]] {
+        constraint sum[mode in 0...data["M"]](presentMode[task][mode]) == 1;
+    }
+
+    // Makespan: end of the last task
+    makespan <- max[task in 0...data["n"]] (end(tasks[task]));
+
+    // Constraints: Renewable resources
+    for [r in 0...data["R"].count()] {
+        constraint and(0...makespan,
+                t => sum[task in 0...data["n"]][mode in 0...data["M"]](
+                data["r"][task][mode][r] * contains(tasksInMode[task][mode], t)) <= data["R"][r]);
+    }
+
+    // Objective: Minimize the makespan
+    minimize makespan;
+}
+
+// Parameterize the solver
+function param() {
+    if (hxTimeLimit == nil) hxTimeLimit = 60;
+}
+
+/* 
+ *  Write the solution in a file with the following format:
+ *  - total makespan
+ *  - for each task, the task ID, the active mode ID, the start and end times
+ */
+function output() {
+    if (outFileName != nil) {
+        outFile = io.openWrite(outFileName);
+        println("Solution written in file ", outFileName);
+        outFile.println(makespan.value);
+        for [task in 0...data["n"]] {
+            local activeModeId = -1;
+            for [mode in 0...data["M"]] {
+                if (presentMode[task][mode].value) {
+                    activeModeId = mode;
+                    break;
+                }
+            }
+            outFile.println(task + 1, " ", activeModeId + 1, " ", tasks[task].value.start, " ", tasks[task].value.end);
+        }
+    }
+}
+
+function readInput() {
+    inFile = io.openRead(inFileName);
+    data = json.parse(inFile);
+
+    // // Parse number of tasks
+    // for [i in 0...5] {
+    //     inFile.readln();
+    // }
+    // line = inFile.readln().split(":");
+    // nbTasks = line[1].toInt();
+
+    // // Parse number of resources
+    // for [i in 0...2] {
+    //     inFile.readln();
+    // }
+    // line = inFile.readln().split(":");
+    // nbRenewableResources = line[1].split()[0].toInt();
+
+    // line = inFile.readln().split(":");
+    // nbNonRenewableResources = line[1].split()[0].toInt();
+    // nbResources = nbRenewableResources + nbNonRenewableResources;
+
+    // // Parse successors of each task
+    // for [i in 0...8] {
+    //     inFile.readln();
+    // }
+
+    // local taskId = inFile.readInt() - 1;
+    // nbModes = {};
+    // successors = {};
+    // nbSuccessors = {};
+    // while (true) {
+    //     nbModes[taskId] = inFile.readInt();
+    //     nbSuccessors[taskId] = inFile.readInt();
+    //     for [s in 0...nbSuccessors[taskId]] {
+    //         successors[taskId][s] = inFile.readInt() - 1;
+    //     }
+    //     if (taskId + 1 == nbTasks) {
+    //         break;
+    //     }
+    //     taskId = inFile.readInt() - 1;
+    // }
+
+    // // Parse tasks durations per mode AND consumed resource weight per mode for each task
+    // for [i in 0...4] {
+    //     inFile.readln();
+    // }
+
+    // durations = {};
+    // taskId = inFile.readInt() - 1;
+    // while (true) {
+    //     for [m in 0...nbModes[taskId]] {
+    //         modeId = inFile.readInt() - 1;
+    //         durations[taskId][modeId] = inFile.readInt();
+    //         for [resourceId in 0...nbResources] {
+    //             weight[taskId][resourceId][modeId] = inFile.readInt();
+    //         }
+    //     }
+    //     if (taskId + 1 == nbTasks) {
+    //         break;
+    //     }
+    //     taskId = inFile.readInt() - 1;
+    // }
+
+    // // Parse maximum capacity for each resource
+    // for [i in 0...3] {
+    //     inFile.readln();
+    // }
+    // line = inFile.readln().split();
+
+    // for [resource in 0...nbResources] {
+    //     capacity[resource] = line[resource].toInt();
+    // }
+
+    // // Trivial upper bound for the start times of the tasks
+    // horizon = sum[task in 0...nbTasks](max[mode in 0...nbModes[task]](durations[task][mode]));
+    
+    inFile.close();
+}

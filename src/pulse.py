@@ -127,10 +127,10 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, VP, silent=True):
 
 if __name__ == "__main__":
     # input = json.load(open("tests/simple.json"))
-    input = json.load(open("tests/ra-pst.json"))
+    input = json.load(open("tests/ra-pst-10.json"))
     start_time = time.time()
     model_infeasible = True
-    model, x, divisor = pulse_model(n=input["n"], T=input["T"], M=input["M"], R=input["R"], E=input["E"], p=input["p"], L=input["L"], r=input["r"], VP=None)
+    model, divisor = pulse_model(n=input["n"], T=input["T"], M=input["M"], R=input["R"], E=input["E"], p=input["p"], L=input["L"], r=input["r"], VP=None)
     model.optimize()
     if model.status == GRB.INFEASIBLE:
         print("\033[91mModel infeasible\033[0m")
