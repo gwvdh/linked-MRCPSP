@@ -57,7 +57,7 @@ def latex_table(stat):
 
 if __name__ == "__main__":
     # input_base = json.load(open("tests/simple.json"))
-    input_base = json.load(open("tests/ra-pst-5.json"))
+    input_base = json.load(open("tests/ra-pst-2.json"))
     stats = test_models([
         ("PDT", pulse_model),
         ("PDDT", pulse_model_disaggregated),
