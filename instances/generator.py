@@ -8,7 +8,7 @@ from collections import defaultdict
 class NetworkType(Enum):
     INTREE = "intree" # 1 -> 3, 2 -> 3
     SINGLE = "single" # 1 
-    DOUBLE = "double" # 1 -> 3
+    DOUBLE = "double" # 1 -> 2
     TRIPLE = "triple" # 1 -> 2 -> 3
 
 class ResourceLevel(Enum):
@@ -83,7 +83,7 @@ class Process:
 
 def generate_instance(number_of_processes: int, arrival_rate: float, max_phases: int = 3):
     processes = []
-    phase_profiles: List[PhaseProfile] = [PhaseProfile(random.uniform(1.0, 10.0), random.uniform(1.0, 3.0), random.uniform(1.0,3.0)) for _ in range(3)]
+    phase_profiles: List[PhaseProfile] = [PhaseProfile(random.uniform(1.0, 5.0), random.uniform(1.0, 1.5), random.uniform(1.0,1.5)) for _ in range(3)]
     for _ in range(number_of_processes):
         process_structure = random.choice([NetworkType.SINGLE, NetworkType.DOUBLE, NetworkType.TRIPLE, NetworkType.INTREE])
         print(f'Generating process with structure {process_structure}')
@@ -170,6 +170,7 @@ def plot_timelines(phase_timelines: List[Dict[int, Dict[ResourceLevel, int]]]):
 def monte_carlo_simulation(processes: List[Process], iterations: int, max_phases: int = 3):
     """Find the average resource demands for each time slot and phase by chosing random modes for each process."""
     avg_timelines = [defaultdict(lambda: {r: 0.0 for r in ResourceLevel}) for _ in range(max_phases)]
+    max_timelines = [defaultdict(lambda: {r: 0.0 for r in ResourceLevel}) for _ in range(max_phases)]
     
     print(f"Running {iterations} simulations...")
     for _ in range(iterations):
@@ -180,6 +181,12 @@ def monte_carlo_simulation(processes: List[Process], iterations: int, max_phases
             for t, res_counts in timeline.items():
                 for res, count in res_counts.items():
                     avg_timelines[phase_id][t][res] += count
+        
+        # Update max timelines
+        for phase_id, timeline in enumerate(single_run):
+            for t, res_counts in timeline.items():
+                for res, count in res_counts.items():
+                    max_timelines[phase_id][t][res] = max(max_timelines[phase_id][t][res], count)
 
     # Divide by number of iterations to get average timelines
     for phase_id in range(max_phases):
@@ -187,7 +194,7 @@ def monte_carlo_simulation(processes: List[Process], iterations: int, max_phases
             for res in ResourceLevel:
                 avg_timelines[phase_id][t][res] /= iterations
                 
-    return [dict(sorted(tl.items())) for tl in avg_timelines]
+    return [dict(sorted(tl.items())) for tl in avg_timelines], [dict(sorted(tl.items())) for tl in max_timelines]
 
 
 
@@ -200,10 +207,11 @@ if __name__ == "__main__":
     processes = generate_instance(number_of_processes=NUMBER_OF_PROCESSES, arrival_rate=ARRIVAL_RATE)
 
     print("Simulating (Arrival Rate = 0.5)...")
-    results = monte_carlo_simulation(processes=processes, iterations=ITERATIONS)
+    avg_results, max_results = monte_carlo_simulation(processes=processes, iterations=ITERATIONS)
     
-    print("Simulation complete. Max time:", max(t for r in results for t in r.keys()) if results else 0)
+    print("Simulation complete. Max time:", max(t for r in avg_results for t in r.keys()) if avg_results else 0)
     
     print("Plotting results...")
-    plot_timelines(results)
+    plot_timelines(avg_results)
+    plot_timelines(max_results)
 
