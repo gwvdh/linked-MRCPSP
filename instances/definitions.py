@@ -38,10 +38,12 @@ class PhaseProfile:
 
 
 class Process:
-    def __init__(self, network_type: NetworkType, phases: List[PhaseProfile], start_time: int = 0):
+    def __init__(self, network_type: NetworkType, phases: List[PhaseProfile], start_time: int = 0, res_1_2_multiplier: float = 2.0, res_1_3_multiplier: float = 3.0):
         self.network_type = network_type
         self.phases = phases
         self.start_time = start_time
+        self.resource_1_2_multiplier = res_1_2_multiplier
+        self.resource_1_3_multiplier = res_1_3_multiplier
 
     def max_processing_time(self):
         return sum(phase.resource_1_duration + phase.resource_2_duration + phase.resource_3_duration for phase in self.phases)
@@ -96,10 +98,10 @@ class Process:
                     tasks.append(Task(phase.resource_2_duration, ResourceLevel.L2, earliest_start=start_time+sum(t.duration for t in tasks)))
                     tasks.append(Task(phase.resource_3_duration, ResourceLevel.L3, earliest_start=start_time+sum(t.duration for t in tasks)))
                 case Mode.MODE_2:
-                    tasks.append(Task(phase.resource_2_duration*2, ResourceLevel.L2, earliest_start=start_time+sum(t.duration for t in tasks)))
+                    tasks.append(Task(int(phase.resource_2_duration*self.resource_1_2_multiplier), ResourceLevel.L2, earliest_start=start_time+sum(t.duration for t in tasks)))
                     tasks.append(Task(phase.resource_3_duration, ResourceLevel.L3, earliest_start=start_time+sum(t.duration for t in tasks)))
                 case Mode.MODE_3:
-                    tasks.append(Task(phase.resource_3_duration*3, ResourceLevel.L3, earliest_start=start_time+sum(t.duration for t in tasks)))
+                    tasks.append(Task(int(phase.resource_3_duration*self.resource_1_3_multiplier), ResourceLevel.L3, earliest_start=start_time+sum(t.duration for t in tasks)))
                 case _:
                     raise Exception("Invalid mode")
             phases.append(tasks)

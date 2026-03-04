@@ -14,7 +14,9 @@ def generate_instance(number_of_processes: int, max_phases: int = 3,
                       min_resource_2_ratio: float = 1.0,
                       resource_2_ratio_center: float = 1.3,
                       resource_2_ratio_spread: float = 1.0,
-                      arrival_rate: float = 0.7
+                      arrival_rate: float = 0.7,
+                      res_1_2_multiplier: float = 2.0,
+                      res_1_3_multiplier: float = 3.0
                       ):
     """
     Generates a list of processes with randomized phase profiles.
@@ -29,6 +31,8 @@ def generate_instance(number_of_processes: int, max_phases: int = 3,
     :param resource_2_ratio_center: Center of the resource 2 ratio normal distribution
     :param resource_2_ratio_spread: Spread of the resource 2 ratio normal distribution
     :param arrival_rate: Arrival rate of the processes
+    :param res_1_2_multiplier: Multiplier for resource 1 to resource 2 processing time
+    :param res_1_3_multiplier: Multiplier for resource 1 to resource 3 processing time
     """
     processes = []
     phase_profiles: List[PhaseProfile] = []
@@ -47,7 +51,13 @@ def generate_instance(number_of_processes: int, max_phases: int = 3,
         start_time += arrivals[i] * (i>0)
         process_structure = random.choice([NetworkType.SINGLE, NetworkType.DOUBLE, NetworkType.TRIPLE, NetworkType.INTREE])
         print(f'Generating process with structure {process_structure} and start time {start_time}')
-        processes.append(Process(process_structure, phase_profiles, start_time=start_time))
+        processes.append(Process(
+            process_structure, 
+            phase_profiles, 
+            start_time=start_time,
+            res_1_2_multiplier=res_1_2_multiplier,
+            res_1_3_multiplier=res_1_3_multiplier
+        ))
     return processes
 
 
