@@ -1,7 +1,7 @@
 from math import gcd
 
 
-def get_earliest_start_time(n, T, M, R, E, p, L, r, VP):
+def get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES=None):
     """
     Longest path calculation based on precedence relations. For each mode, the shortest processing time is taken. 
     E forms a DAG. 
@@ -14,9 +14,13 @@ def get_earliest_start_time(n, T, M, R, E, p, L, r, VP):
     :param L: List of pairs of activity indices (i,j) indicating linked modes
     :param r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
     :param VP: List of pairs of activity indices (i,j) that are not precedence-related
+    :param ES: Earliest start time for each activity i
     :return: List of earliest start times for each activity i
     """
-    earliest_starting_times = [0] * n
+    if ES is None:
+        earliest_starting_times = [0] * n
+    else:
+        earliest_starting_times = ES
     current_activity = 0
     earliest_starting_times[current_activity] = 0
     for i in range(1,n):

@@ -12,6 +12,7 @@ out/*
 testset*
 !testsets_final*
 .pgf
+plots/
 
 eval_archive*
 ra_pst.xml
