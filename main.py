@@ -8,6 +8,13 @@ from src.vis_schedule import visualize_pulse_model
 
 
 def get_or_instance(processes, scarcity, max_start_time, max_phases=3):
+    """
+    Translate the generated processes into an OR fiendly instance
+    :param processes: List of processes
+    :param scarcity: Resource scarcity
+    :param max_start_time: Maximum start time of the processes
+    :param max_phases: Maximum number of phases
+    """
     print(f"Scarcity: {scarcity}")
     min_max_demands = get_min_max_demands(processes=processes, max_phases=max_phases) 
     min_max_demands[0][2] = (1, max(3,min_max_demands[0][2][1]))
@@ -101,14 +108,19 @@ def get_or_instance(processes, scarcity, max_start_time, max_phases=3):
 
 
 def main():
-    NUMBER_OF_PROCESSES = 30
-    ARRIVAL_RATE = 0.7
-    ITERATIONS = 50
-
     print("Generating instances...")
     processes = generate_instance(
-        number_of_processes=NUMBER_OF_PROCESSES, 
-        arrival_rate=ARRIVAL_RATE
+        number_of_processes=20, 
+        arrival_rate=0.7,
+        max_phases=3,
+        min_base_duration=1.0,
+        max_base_duration=5.0,
+        min_resource_1_ratio=1.0,
+        resource_1_ratio_center=1.4,
+        resource_1_ratio_spread=.5,
+        min_resource_2_ratio=1.0,
+        resource_2_ratio_center=1.3,
+        resource_2_ratio_spread=.5,
     )
 
     max_start_time = max([p.start_time + p.max_processing_time() for p in processes])

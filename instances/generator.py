@@ -5,20 +5,48 @@ from .vis import plot_timelines
 from .definitions import *
 
 
-def generate_instance(number_of_processes: int, arrival_rate: float, max_phases: int = 3):
+def generate_instance(number_of_processes: int, max_phases: int = 3,
+                      min_base_duration: float = 1.0,
+                      max_base_duration: float = 5.0,
+                      min_resource_1_ratio: float = 1.0,
+                      resource_1_ratio_center: float = 1.5,
+                      resource_1_ratio_spread: float = 1.0,
+                      min_resource_2_ratio: float = 1.0,
+                      resource_2_ratio_center: float = 1.3,
+                      resource_2_ratio_spread: float = 1.0,
+                      arrival_rate: float = 0.7
+                      ):
+    """
+    Generates a list of processes with randomized phase profiles.
+    :param number_of_processes: Number of processes to generate
+    :param max_phases: Maximum number of phases per process
+    :param min_base_duration: Minimum base duration of the phases
+    :param max_base_duration: Maximum base duration of the phases
+    :param min_resource_1_ratio: Minimum resource 1 ratio of the phases
+    :param resource_1_ratio_center: Center of the resource 1 ratio normal distribution
+    :param resource_1_ratio_spread: Spread of the resource 1 ratio normal distribution
+    :param min_resource_2_ratio: Minimum resource 2 ratio of the phases
+    :param resource_2_ratio_center: Center of the resource 2 ratio normal distribution
+    :param resource_2_ratio_spread: Spread of the resource 2 ratio normal distribution
+    :param arrival_rate: Arrival rate of the processes
+    """
     processes = []
     phase_profiles: List[PhaseProfile] = []
-    for _ in range(3):
-        base_duration = random.uniform(1.0, 5.0)
-        resource_1_ratio = max(1.0, 1 + np.random.normal(1.5, 1))
-        resource_2_ratio = max(1.0, 1 + np.random.normal(1.3, 1))
+    for _ in range(max_phases):
+        base_duration = random.uniform(min_base_duration, max_base_duration)
+        resource_1_ratio = max(
+            min_resource_1_ratio, 
+            np.random.normal(resource_1_ratio_center, resource_1_ratio_spread))
+        resource_2_ratio = max(
+            min_resource_2_ratio, 
+            np.random.normal(resource_2_ratio_center, resource_2_ratio_spread))
         phase_profiles.append(PhaseProfile(base_duration, resource_1_ratio, resource_2_ratio))
     start_time = 0
+    arrivals = np.random.poisson(arrival_rate, number_of_processes)
     for i in range(number_of_processes):
-        start_time += np.random.poisson(arrival_rate, 2)[0] * (i>0)
+        start_time += arrivals[i] * (i>0)
         process_structure = random.choice([NetworkType.SINGLE, NetworkType.DOUBLE, NetworkType.TRIPLE, NetworkType.INTREE])
         print(f'Generating process with structure {process_structure} and start time {start_time}')
-        # TODO: Do something with arrival times
         processes.append(Process(process_structure, phase_profiles, start_time=start_time))
     return processes
 
@@ -45,7 +73,8 @@ def simulate_extermal(processes: List[Process], max_phases: int, get_min: bool =
 
 
 def get_extermal_demands(timeline: List[List[Dict[int, Dict[ResourceLevel, int]]]], get_min=True):
-    """Get the maximum demand in the time line for each resource per phase
+    """
+    Get the maximum demand in the time line for each resource per phase
     :param timeline: List of [resource][phase] timelines, where resource is min/max demand for the phase.
     """
     extermal_demands = [[0 for _ in ResourceLevel] for _ in range(len(timeline))]
@@ -108,11 +137,16 @@ def monte_carlo_simulation(processes: List[Process], iterations: int, max_phases
                 
     return [dict(sorted(tl.items())) for tl in avg_timelines], [dict(sorted(tl.items())) for tl in max_timelines]
 
-def get_min_max_demands(processes, max_phases):
+def get_min_max_demands(processes, max_phases=3):
+    """
+    Get the minimum and maximum demands for each resource per phase
+    :param processes: List of processes
+    :param max_phases: Maximum number of phases
+    """
     resources = [ResourceLevel.L1, ResourceLevel.L2, ResourceLevel.L3]
 
-    timelines_min = simulate_extermal(processes=processes, max_phases=3, get_min=True)
-    timelines_max = simulate_extermal(processes=processes, max_phases=3, get_min=False)
+    timelines_min = simulate_extermal(processes=processes, max_phases=max_phases, get_min=True)
+    timelines_max = simulate_extermal(processes=processes, max_phases=max_phases, get_min=False)
     #plot_timelines(timelines_min[0], filename="timeline_min.png")
     #plot_timelines(timelines_max[0], filename="timeline_max.png")
 
