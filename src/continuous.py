@@ -3,9 +3,9 @@ from gurobipy import GRB
 import json
 from math import gcd
 import time
-from utils import get_earliest_start_time, get_latest_start_time
+from .utils import get_earliest_start_time, get_latest_start_time
 
-def continuous_model(n, T, M, R, E, VP, p, L, r, silent=True):
+def continuous_model(n, T, M, R, E, VP, p, L, r, ES=None, silent=True):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -16,6 +16,7 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, silent=True):
     p: List of processing times for each activity i in each mode m p[i][m]
     L: List of pairs of activity indices (i,j) indicating linked modes
     r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
+    ES: Earliest start time for each activity i
     """
     # Normalize processing times
     unique_processing_times = list(set([i for job in p for i in job]))
@@ -27,7 +28,7 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, silent=True):
     T = T // divisor
 
     # Starting times
-    earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP)
+    earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
     latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
 
     # Initialize model
