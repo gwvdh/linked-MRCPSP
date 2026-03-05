@@ -47,6 +47,7 @@ def generate_instance(number_of_processes: int, max_phases: int = 3,
         phase_profiles.append(PhaseProfile(base_duration, resource_1_ratio, resource_2_ratio))
     start_time = 0
     arrivals = np.random.poisson(arrival_rate, number_of_processes)
+    print(arrivals)
     for i in range(number_of_processes):
         start_time += arrivals[i] * (i>0)
         process_structure = random.choice([NetworkType.SINGLE, NetworkType.DOUBLE, NetworkType.TRIPLE, NetworkType.INTREE])
@@ -157,8 +158,13 @@ def get_min_max_demands(processes, max_phases=3):
 
     timelines_min = simulate_extermal(processes=processes, max_phases=max_phases, get_min=True)
     timelines_max = simulate_extermal(processes=processes, max_phases=max_phases, get_min=False)
-    #plot_timelines(timelines_min[0], filename="timeline_min.png")
-    #plot_timelines(timelines_max[0], filename="timeline_max.png")
+    #plot_timelines(timelines_min[0], filename="timeline_min_1.png")
+    #plot_timelines(timelines_max[0], filename="timeline_max_1.png")
+    #plot_timelines(timelines_min[1], filename="timeline_min_2.png")
+    #plot_timelines(timelines_max[1], filename="timeline_max_2.png")
+    #plot_timelines(timelines_min[2], filename="timeline_min_3.png")
+    #plot_timelines(timelines_max[2], filename="timeline_max_3.png")
+
 
     min_demands = get_extermal_demands(timelines_min, get_min=True)
     max_demands = get_extermal_demands(timelines_max, get_min=False)
