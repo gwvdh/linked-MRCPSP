@@ -5,7 +5,7 @@ from math import gcd
 import time
 from .utils import get_earliest_start_time, get_latest_start_time
 
-def pulse_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True):
+def pulse_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True, obj="makespan"):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -16,6 +16,7 @@ def pulse_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True):
     L: List of pairs of activity indices (i,j) indicating linked modes
     r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
     ES: Earliest start time for each activity i
+    obj: objective function, either "makespan" or "flow-time"
     """
     # Normalize processing times
     unique_processing_times = list(set([i for job in p for i in job]))
@@ -40,7 +41,10 @@ def pulse_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True):
     x = model.addVars(pulse_sets, vtype=GRB.BINARY, name="pulse")
 
     # Objective
-    model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M)), GRB.MINIMIZE)
+    if obj == "makespan":
+        model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M)), GRB.MINIMIZE)
+    else:
+        raise ValueError(f"Unknown objective function {obj}")
 
     # Constraints
     # Schedule job exactly once

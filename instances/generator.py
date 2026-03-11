@@ -1,8 +1,12 @@
 import numpy as np
 import random
 
-from .vis import plot_timelines
-from .definitions import *
+if __name__ == "__main__":
+    from vis import plot_timelines
+    from definitions import *
+else:
+    from .vis import plot_timelines
+    from .definitions import *
 
 
 def generate_instance(number_of_processes: int, max_phases: int = 3,
@@ -45,20 +49,34 @@ def generate_instance(number_of_processes: int, max_phases: int = 3,
             min_resource_2_ratio, 
             np.random.normal(resource_2_ratio_center, resource_2_ratio_spread))
         phase_profiles.append(PhaseProfile(base_duration, resource_1_ratio, resource_2_ratio))
+    # Arrival times 
     start_time = 0
-    arrivals = np.random.poisson(arrival_rate, number_of_processes)
-    print(arrivals)
-    for i in range(number_of_processes):
-        start_time += arrivals[i] * (i>0)
-        process_structure = random.choice([NetworkType.SINGLE, NetworkType.DOUBLE, NetworkType.TRIPLE, NetworkType.INTREE])
-        print(f'Generating process with structure {process_structure} and start time {start_time}')
-        processes.append(Process(
-            process_structure, 
-            phase_profiles, 
-            start_time=start_time,
-            res_1_2_multiplier=res_1_2_multiplier,
-            res_1_3_multiplier=res_1_3_multiplier
-        ))
+    max_periods = number_of_processes * 3
+    interarrival_times = np.random.default_rng().exponential(
+        scale=arrival_rate, size=max_periods)
+    arrivals = np.random.poisson(arrival_rate, max_periods)
+    i = 0
+    period = 0
+    while i < number_of_processes:
+        if period > 0:
+            start_time += int(interarrival_times[period])
+        batch_size = arrivals[period]
+        period += 1
+        for j in range(batch_size):
+            if i >= number_of_processes:
+                break
+            process_structure = random.choice([
+                NetworkType.SINGLE, NetworkType.DOUBLE, 
+                NetworkType.TRIPLE, NetworkType.INTREE])
+            print(f'{i}: Generating process with structure {process_structure} and start time {start_time}')
+            processes.append(Process(
+                process_structure, 
+                phase_profiles, 
+                start_time=start_time,
+                res_1_2_multiplier=res_1_2_multiplier,
+                res_1_3_multiplier=res_1_3_multiplier
+            ))
+            i += 1
     return processes
 
 
@@ -72,13 +90,24 @@ def simulate_extermal(processes: List[Process], max_phases: int, get_min: bool =
         for process in processes:
             # Select random mode for each process
             if get_min:
-                process_tasks = process.get_min_resource_demand_mode(resource)
+                process_modes = process.get_min_resource_demand_mode(resource)
             else:
-                process_tasks = process.get_max_resource_demand_mode(resource)
-            for i, phase_tasks in enumerate(process_tasks):
+                process_modes = process.get_max_resource_demand_mode(resource)
+            prev_task_start = process.start_time
+            task_start = process.start_time
+            for i, phase_tasks in enumerate(process.tasks):
+                if process.network_type == NetworkType.INTREE and i == 1:
+                    prev_task_start = task_start
+                    task_start = process.start_time
+                elif process.network_type == NetworkType.INTREE and i == 2:
+                    task_start = max(prev_task_start, task_start)
+                elif process.network_type == NetworkType.DOUBLE and i == 2: continue
+                elif process.network_type == NetworkType.SINGLE and i >= 1: continue
                 for task in phase_tasks:
-                    for t in range(task.duration):
-                        phase_timelines[i][task.earliest_start + t][task.resource] += 1
+                    if task is None: continue
+                    for t in range(task.duration[process_modes[i].value]):
+                        phase_timelines[i][task_start + t][task.resource[process_modes[i].value]] += 1
+                    task_start += task.duration[process_modes[i].value]
         timelines.append(phase_timelines)
     return timelines
 
@@ -116,11 +145,11 @@ def simulate_processes(processes: List[Process], max_phases: int):
     phase_timelines = [defaultdict(lambda: {r: 0 for r in ResourceLevel}) for _ in range(max_phases)]
     for process in processes:
         # Select random mode for each process
-        process_tasks = process.get_random_mode_tasks()
-        for i, phase_tasks in enumerate(process_tasks):
+        random_modes = [random.choice([Mode.MODE_1, Mode.MODE_2, Mode.MODE_3]) for _ in range(len(process.phases))]
+        for i, phase_tasks in enumerate(process.tasks):
             for task in phase_tasks:
-                for t in range(task.duration):
-                    phase_timelines[i][task.earliest_start + t][task.resource] += 1
+                for t in range(task.duration[random_modes[i]]):
+                    phase_timelines[i][task.earliest_start + t][task.resource[random_modes[i]]] += 1
     return [dict(sorted(tl.items())) for tl in phase_timelines]
 
 
@@ -158,12 +187,12 @@ def get_min_max_demands(processes, max_phases=3):
 
     timelines_min = simulate_extermal(processes=processes, max_phases=max_phases, get_min=True)
     timelines_max = simulate_extermal(processes=processes, max_phases=max_phases, get_min=False)
-    #plot_timelines(timelines_min[0], filename="timeline_min_1.png")
-    #plot_timelines(timelines_max[0], filename="timeline_max_1.png")
-    #plot_timelines(timelines_min[1], filename="timeline_min_2.png")
-    #plot_timelines(timelines_max[1], filename="timeline_max_2.png")
-    #plot_timelines(timelines_min[2], filename="timeline_min_3.png")
-    #plot_timelines(timelines_max[2], filename="timeline_max_3.png")
+    plot_timelines(timelines_min[0], filename="timeline_min_1.png")
+    plot_timelines(timelines_max[0], filename="timeline_max_1.png")
+    plot_timelines(timelines_min[1], filename="timeline_min_2.png")
+    plot_timelines(timelines_max[1], filename="timeline_max_2.png")
+    plot_timelines(timelines_min[2], filename="timeline_min_3.png")
+    plot_timelines(timelines_max[2], filename="timeline_max_3.png")
 
 
     min_demands = get_extermal_demands(timelines_min, get_min=True)

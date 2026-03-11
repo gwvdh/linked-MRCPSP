@@ -20,9 +20,9 @@ def get_or_instance(processes, scarcity, max_start_time,
     """
     print(f"Scarcity: {scarcity}")
     min_max_demands = get_min_max_demands(processes=processes, max_phases=max_phases) 
-    min_max_demands[0][2] = (1, max(3,min_max_demands[0][2][1]))
-    min_max_demands[1][2] = (1, max(3,min_max_demands[1][2][1]))
-    min_max_demands[2][2] = (1, max(3,min_max_demands[2][2][1]))
+   # min_max_demands[0][2] = (1, max(3,min_max_demands[0][2][1]))
+   # min_max_demands[1][2] = (1, max(3,min_max_demands[1][2][1]))
+   # min_max_demands[2][2] = (1, max(3,min_max_demands[2][2][1]))
     print(f"min_max_demands: {min_max_demands}")
     # min_max_demands[phase][resource]
     capacities = [[get_capacity(min_demand, max_demand, scarcity) for min_demand, max_demand in min_max_demands[i]] for i in range(max_phases)]
@@ -70,30 +70,37 @@ def get_or_instance(processes, scarcity, max_start_time,
                     L.append([task_counter-1, task_counter])
                 # processing times and resource requirements
                 for mode in Mode:
-                    if j == 0 and mode == Mode.MODE_1:
-                        p[task_counter][mode.value] = phase.resource_1_duration
-                        r[task_counter][mode.value][i*max_phases + 0] = 1
-                    elif j == 0 and mode == Mode.MODE_2:
-                        p[task_counter][mode.value] = int(phase.resource_2_duration*res_1_2_multiplier)
-                        r[task_counter][mode.value][i*max_phases + 1] = 1
-                    elif j == 0 and mode == Mode.MODE_3:
-                        p[task_counter][mode.value] = int(phase.resource_3_duration*res_1_3_multiplier)
-                        r[task_counter][mode.value][i*max_phases + 2] = 1
-                    elif j == 1 and mode == Mode.MODE_1:
-                        p[task_counter][mode.value] = phase.resource_2_duration
-                        r[task_counter][mode.value][i*max_phases + 1] = 1
-                    elif j == 1 and mode == Mode.MODE_2:
-                        p[task_counter][mode.value] = 0
-                    elif j == 1 and mode == Mode.MODE_3:
-                        p[task_counter][mode.value] = 0
-                    elif j == 2 and mode == Mode.MODE_1:
-                        p[task_counter][mode.value] = phase.resource_3_duration
-                        r[task_counter][mode.value][i*max_phases + 2] = 1 
-                    elif j == 2 and mode == Mode.MODE_2:
-                        p[task_counter][mode.value] = phase.resource_3_duration
-                        r[task_counter][mode.value][i*max_phases + 2] = 1
-                    elif j == 2 and mode == Mode.MODE_3:
-                        p[task_counter][mode.value] = 0
+                    p[task_counter][mode.value] = process.tasks[i][j].duration[mode.value]
+                    resource_demand = process.tasks[i][j].resource[mode.value]
+                    for resource in ResourceLevel:
+                        if resource == resource_demand:
+                            r[task_counter][mode.value][i*max_phases + resource.value] = 1
+                            break
+                    
+                    #if j == 0 and mode == Mode.MODE_1:
+                    #    p[task_counter][mode.value] = process.tasks[i][j].duration[mode.value]
+                    #    r[task_counter][mode.value][i*max_phases + 0] = 1
+                    #elif j == 0 and mode == Mode.MODE_2:
+                    #    p[task_counter][mode.value] = int(phase.resource_2_duration*res_1_2_multiplier)
+                    #    r[task_counter][mode.value][i*max_phases + 1] = 1
+                    #elif j == 0 and mode == Mode.MODE_3:
+                    #    p[task_counter][mode.value] = int(phase.resource_3_duration*res_1_3_multiplier)
+                    #    r[task_counter][mode.value][i*max_phases + 2] = 1
+                    #elif j == 1 and mode == Mode.MODE_1:
+                    #    p[task_counter][mode.value] = phase.resource_2_duration
+                    #    r[task_counter][mode.value][i*max_phases + 1] = 1
+                    #elif j == 1 and mode == Mode.MODE_2:
+                    #    p[task_counter][mode.value] = 0
+                    #elif j == 1 and mode == Mode.MODE_3:
+                    #    p[task_counter][mode.value] = 0
+                    #elif j == 2 and mode == Mode.MODE_1:
+                    #    p[task_counter][mode.value] = phase.resource_3_duration
+                    #    r[task_counter][mode.value][i*max_phases + 2] = 1 
+                    #elif j == 2 and mode == Mode.MODE_2:
+                    #    p[task_counter][mode.value] = phase.resource_3_duration
+                    #    r[task_counter][mode.value][i*max_phases + 2] = 1
+                    #elif j == 2 and mode == Mode.MODE_3:
+                    #    p[task_counter][mode.value] = 0
                 ES[task_counter] = process.start_time
                 task_counter += 1
     instance = {

@@ -22,9 +22,8 @@ class Mode(Enum):
 
 @dataclass
 class Task:
-    duration: int
-    resource: ResourceLevel
-    earliest_start: int
+    duration: List[int] # Duration of the task in each mode
+    resource: List[ResourceLevel] # Resource level of the task in each mode
 
 class PhaseProfile:
     def __init__(self, base_duration: float, resource_1_ratio: float, resource_2_ratio: float):
@@ -44,6 +43,8 @@ class Process:
         self.start_time = start_time
         self.resource_1_2_multiplier = res_1_2_multiplier
         self.resource_1_3_multiplier = res_1_3_multiplier
+        self.tasks = [[None for _ in range(3)] for _ in range(len(self.phases))] 
+        self.define_tasks()
 
     def max_processing_time(self):
         return sum(phase.resource_1_duration + phase.resource_2_duration + phase.resource_3_duration for phase in self.phases)
@@ -53,62 +54,58 @@ class Process:
         # Mode for minimum demand: (mode, min_demand)
         phases = [(None, sys.maxsize)] * len(self.phases)
         for mode in Mode:
-            tasks = self.get_tasks([mode] * len(self.phases))
-            for phase_id, phase_tasks in enumerate(tasks):
-                resource_tasks = [task for task in phase_tasks if task.resource == resource]
-                resource_demand = sum(task.duration for task in resource_tasks)
+            for phase_id, phase_tasks in enumerate(self.tasks):
+                resource_tasks = [task for task in phase_tasks if task is not None and task.resource[mode.value] == resource]
+                resource_demand = sum(task.duration[mode.value] for task in resource_tasks)
                 if resource_demand < phases[phase_id][1]:
                     phases[phase_id] = (mode, resource_demand)
-        return self.get_tasks([phases[i][0] for i in range(len(self.phases))])
+        # return the modes for each phase
+        return [phase[0] for phase in phases]
 
     def get_max_resource_demand_mode(self, resource: ResourceLevel):
         """For each phase, select the mode with the minimum demand for the given resource"""
         # Mode for minimum demand: (mode, min_demand)
         phases = [(None, 0)] * len(self.phases)
         for mode in Mode:
-            tasks = self.get_tasks([mode] * len(self.phases))
-            for phase_id, phase_tasks in enumerate(tasks):
-                resource_tasks = [task for task in phase_tasks if task.resource == resource]
-                resource_demand = sum(task.duration for task in resource_tasks)
+            for phase_id, phase_tasks in enumerate(self.tasks):
+                resource_tasks = [task for task in phase_tasks if task is not None and task.resource[mode.value] == resource]
+                resource_demand = sum(task.duration[mode.value] for task in resource_tasks)
                 if resource_demand > phases[phase_id][1]:
                     phases[phase_id] = (mode, resource_demand)
-        return self.get_tasks([phases[i][0] for i in range(len(self.phases))])
+        return [phase[0] for phase in phases]
 
-    def get_tasks(self, modes: List[Mode]) -> List[List[Task]]:
-        """Get tasks for each phase based on the given modes"""
-        phases = []
+    def define_tasks(self) -> List[List[Task]]:
         for i, phase in enumerate(self.phases):
             if self.network_type == NetworkType.SINGLE and i >= 1: continue
             if self.network_type == NetworkType.DOUBLE and i >= 2: continue
-            mode = modes[i]
-            tasks = []
+            for j in range(3):
+                if j == 0:
+                    self.tasks[i][j] = Task(
+                        [int(phase.resource_1_duration), 
+                         int(phase.resource_2_duration*self.resource_1_2_multiplier), 
+                         int(phase.resource_3_duration*self.resource_1_3_multiplier)
+                         ], 
+                        [ResourceLevel.L1, ResourceLevel.L2, ResourceLevel.L3], 
+                    )
+                elif j == 1:
+                    self.tasks[i][j] = Task(
+                        [int(phase.resource_2_duration), 
+                         0, 
+                         0
+                         ], 
+                        [ResourceLevel.L2, None, None], 
+                    )
+                elif j == 2:
+                    self.tasks[i][j] = Task(
+                        [int(phase.resource_3_duration), 
+                         int(phase.resource_3_duration), 
+                         0
+                         ],
+                        [ResourceLevel.L3, ResourceLevel.L3, None],
+                    )
+                else:
+                    raise Exception("Invalid task")
+        return self.tasks
 
-            # Find start time for the current phase
-            start_time: float = self.start_time
-            if self.network_type == NetworkType.INTREE and (i == 0 or i == 1):
-                start_time = self.start_time
-            elif self.network_type == NetworkType.INTREE and i == 2:
-                start_time = self.start_time + max(sum(t.duration for t in phases[0]), sum(t.duration for t in phases[1]))
-            else:
-                start_time = self.start_time + sum(t.duration for phase_tasks in phases for t in phase_tasks)
-            
-            match mode:
-                case Mode.MODE_1:   
-                    tasks.append(Task(phase.resource_1_duration, ResourceLevel.L1, earliest_start=start_time+sum(t.duration for t in tasks)))
-                    tasks.append(Task(phase.resource_2_duration, ResourceLevel.L2, earliest_start=start_time+sum(t.duration for t in tasks)))
-                    tasks.append(Task(phase.resource_3_duration, ResourceLevel.L3, earliest_start=start_time+sum(t.duration for t in tasks)))
-                case Mode.MODE_2:
-                    tasks.append(Task(int(phase.resource_2_duration*self.resource_1_2_multiplier), ResourceLevel.L2, earliest_start=start_time+sum(t.duration for t in tasks)))
-                    tasks.append(Task(phase.resource_3_duration, ResourceLevel.L3, earliest_start=start_time+sum(t.duration for t in tasks)))
-                case Mode.MODE_3:
-                    tasks.append(Task(int(phase.resource_3_duration*self.resource_1_3_multiplier), ResourceLevel.L3, earliest_start=start_time+sum(t.duration for t in tasks)))
-                case _:
-                    raise Exception("Invalid mode")
-            phases.append(tasks)
-        return phases
-
-    def get_random_mode_tasks(self) -> List[List[Task]]:
-        return self.get_tasks([random.choice([Mode.MODE_1, Mode.MODE_2, Mode.MODE_3]) for _ in range(len(self.phases))])
-    
     def __str__(self):
         return f"network type: {self.network_type}\n Phases: " + " ".join([str(phase) for phase in self.phases])
