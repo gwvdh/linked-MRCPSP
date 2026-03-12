@@ -5,7 +5,7 @@ from math import gcd
 import time
 from .utils import get_earliest_start_time, get_latest_start_time
 
-def continuous_model(n, T, M, R, E, VP, p, L, r, ES=None, silent=True):
+def continuous_model(n, T, M, R, E, VP, p, L, r, ES=None, silent=True, obj="makespan"):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -49,7 +49,10 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, ES=None, silent=True):
     u = model.addVars(resource_sets, vtype=GRB.BINARY, name="resource")
 
     # Objective
-    model.setObjective(S[n-1], GRB.MINIMIZE)
+    if obj == "makespan":
+        model.setObjective(S[n-1], GRB.MINIMIZE)
+    elif obj == "flow-time":
+        model.setObjective(gp.quicksum(S[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) for i in range(n)), GRB.MINIMIZE)
 
     # Constraints
     # Connect the start-time variables with the completion-start sequencing variables

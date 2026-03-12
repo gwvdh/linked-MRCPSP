@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from collections import defaultdict
 import random
 import sys
+import numpy as np
 
 
 class NetworkType(Enum):
@@ -24,6 +25,7 @@ class Mode(Enum):
 class Task:
     duration: List[int] # Duration of the task in each mode
     resource: List[ResourceLevel] # Resource level of the task in each mode
+    start_time: int # Start time of the task
 
 class PhaseProfile:
     def __init__(self, base_duration: float, resource_1_ratio: float, resource_2_ratio: float):
@@ -74,34 +76,37 @@ class Process:
                     phases[phase_id] = (mode, resource_demand)
         return [phase[0] for phase in phases]
 
-    def define_tasks(self) -> List[List[Task]]:
+    def define_tasks(self, variance: float = 0.3) -> List[List[Task]]:
         for i, phase in enumerate(self.phases):
             if self.network_type == NetworkType.SINGLE and i >= 1: continue
             if self.network_type == NetworkType.DOUBLE and i >= 2: continue
             for j in range(3):
                 if j == 0:
                     self.tasks[i][j] = Task(
-                        [int(phase.resource_1_duration), 
-                         int(phase.resource_2_duration*self.resource_1_2_multiplier), 
-                         int(phase.resource_3_duration*self.resource_1_3_multiplier)
+                        [int(phase.resource_1_duration*np.random.normal(1.0, variance)),
+                         int(phase.resource_2_duration*self.resource_1_2_multiplier*np.random.normal(1.0, variance)), 
+                         int(phase.resource_3_duration*self.resource_1_3_multiplier*np.random.normal(1.0, variance))
                          ], 
                         [ResourceLevel.L1, ResourceLevel.L2, ResourceLevel.L3], 
+                        start_time=self.start_time,
                     )
                 elif j == 1:
                     self.tasks[i][j] = Task(
-                        [int(phase.resource_2_duration), 
+                        [int(phase.resource_2_duration*np.random.normal(1.0, variance)), 
                          0, 
                          0
                          ], 
                         [ResourceLevel.L2, None, None], 
+                        start_time=self.start_time,
                     )
                 elif j == 2:
                     self.tasks[i][j] = Task(
-                        [int(phase.resource_3_duration), 
-                         int(phase.resource_3_duration), 
+                        [int(phase.resource_3_duration*np.random.normal(1.0, variance)), 
+                         int(phase.resource_3_duration*np.random.normal(1.0, variance)), 
                          0
                          ],
                         [ResourceLevel.L3, ResourceLevel.L3, None],
+                        start_time=self.start_time,
                     )
                 else:
                     raise Exception("Invalid task")

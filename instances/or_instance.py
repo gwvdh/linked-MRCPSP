@@ -28,7 +28,7 @@ def get_or_instance(processes, scarcity, max_start_time,
     capacities = [[get_capacity(min_demand, max_demand, scarcity) for min_demand, max_demand in min_max_demands[i]] for i in range(max_phases)]
     # Translate to solver instance
     n = max_phases * 3 * len(processes) + 2 # #phases * #jobs_per_phase * #processes
-    T = int(max_start_time*1.5)
+    T = int(max_start_time)
     M = len(Mode)
     R = [capacities[i][j] for i in range(max_phases) for j in range(len(ResourceLevel))] # phase | resource
     print(f"Resource capacities: {R}")
@@ -76,31 +76,6 @@ def get_or_instance(processes, scarcity, max_start_time,
                         if resource == resource_demand:
                             r[task_counter][mode.value][i*max_phases + resource.value] = 1
                             break
-                    
-                    #if j == 0 and mode == Mode.MODE_1:
-                    #    p[task_counter][mode.value] = process.tasks[i][j].duration[mode.value]
-                    #    r[task_counter][mode.value][i*max_phases + 0] = 1
-                    #elif j == 0 and mode == Mode.MODE_2:
-                    #    p[task_counter][mode.value] = int(phase.resource_2_duration*res_1_2_multiplier)
-                    #    r[task_counter][mode.value][i*max_phases + 1] = 1
-                    #elif j == 0 and mode == Mode.MODE_3:
-                    #    p[task_counter][mode.value] = int(phase.resource_3_duration*res_1_3_multiplier)
-                    #    r[task_counter][mode.value][i*max_phases + 2] = 1
-                    #elif j == 1 and mode == Mode.MODE_1:
-                    #    p[task_counter][mode.value] = phase.resource_2_duration
-                    #    r[task_counter][mode.value][i*max_phases + 1] = 1
-                    #elif j == 1 and mode == Mode.MODE_2:
-                    #    p[task_counter][mode.value] = 0
-                    #elif j == 1 and mode == Mode.MODE_3:
-                    #    p[task_counter][mode.value] = 0
-                    #elif j == 2 and mode == Mode.MODE_1:
-                    #    p[task_counter][mode.value] = phase.resource_3_duration
-                    #    r[task_counter][mode.value][i*max_phases + 2] = 1 
-                    #elif j == 2 and mode == Mode.MODE_2:
-                    #    p[task_counter][mode.value] = phase.resource_3_duration
-                    #    r[task_counter][mode.value][i*max_phases + 2] = 1
-                    #elif j == 2 and mode == Mode.MODE_3:
-                    #    p[task_counter][mode.value] = 0
                 ES[task_counter] = process.start_time
                 task_counter += 1
     instance = {

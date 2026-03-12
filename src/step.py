@@ -5,7 +5,7 @@ from math import gcd
 import time
 from .utils import get_earliest_start_time, get_latest_start_time
 
-def step_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True):
+def step_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True, obj="makespan"):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -40,7 +40,10 @@ def step_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True):
     z = model.addVars(step_sets, vtype=GRB.BINARY, name="pulse")
 
     # Objective
-    model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
+    if obj == "makespan":
+        model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
+    elif obj == "flow-time":
+        model.setObjective(gp.quicksum(z[i, m, t] for t in range(T) for m in range(M) for i in range(1, n)), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once
@@ -71,7 +74,7 @@ def step_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True):
     
     return model, divisor
 
-def step_model_disaggregated(n, T, M, R, E, p, L, r, VP, ES=None, silent=True):
+def step_model_disaggregated(n, T, M, R, E, p, L, r, VP, ES=None, silent=True, obj="makespan"):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -106,7 +109,11 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, VP, ES=None, silent=True):
     z = model.addVars(step_sets, vtype=GRB.BINARY, name="pulse")
 
     # Objective
-    model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
+    if obj == "makespan":
+        model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
+    elif obj == "flow-time":
+        model.setObjective(gp.quicksum(z[i, m, t] for t in range(T) for m in range(M) for i in range(1, n)), GRB.MINIMIZE)
+
     # Constraints
     # Schedule each job exactly once
     model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M)) == 1 for i in range(n)), name="schedule")

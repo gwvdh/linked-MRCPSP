@@ -5,7 +5,7 @@ from math import gcd
 import time
 from .utils import get_earliest_start_time, get_latest_start_time
 
-def onoff_pulse_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True):
+def onoff_pulse_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True, obj="makespan"):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -41,7 +41,10 @@ def onoff_pulse_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True):
     y = model.addVars(pulse_sets, vtype=GRB.BINARY, name="onoff")
 
     # Objective
-    model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M)), GRB.MINIMIZE)
+    if obj == "makespan":
+        model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M)), GRB.MINIMIZE)
+    elif obj == "flow-time":
+        model.setObjective(gp.quicksum(x[i, m, t] * (t - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(1, n)), GRB.MINIMIZE)
 
     # Constraints
     # Schedule job exactly once

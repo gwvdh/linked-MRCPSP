@@ -104,7 +104,7 @@ def simulate_extermal(processes: List[Process], max_phases: int, get_min: bool =
                 elif process.network_type == NetworkType.DOUBLE and i == 2: continue
                 elif process.network_type == NetworkType.SINGLE and i >= 1: continue
                 for task in phase_tasks:
-                    if task is None: continue
+                    if task is None or process_modes[i] is None: continue
                     for t in range(task.duration[process_modes[i].value]):
                         phase_timelines[i][task_start + t][task.resource[process_modes[i].value]] += 1
                     task_start += task.duration[process_modes[i].value]

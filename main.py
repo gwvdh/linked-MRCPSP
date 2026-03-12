@@ -15,7 +15,7 @@ from src.vis_schedule import visualize_pulse_model
 
 def model_selector(model: str, n, T, M, R, E, p, L, r, ES, VP):
     if model == "pulse" or model == "PDT":
-        return pulse_model(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP)
+        return pulse_model(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP, obj="flow-time")
     if model == "pulse-disaggregated" or model == "PDDT":
         return pulse_model_disaggregated(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP)
     if model == "step" or model == "SDT":
@@ -37,8 +37,9 @@ def test_all_models(processes, MAX_PHASES=3, RES_1_2_MULTIPLIER=2.0, RES_1_3_MUL
     models = ["PDT", "PDDT", "SDT", "SDDT", "OODDT", "OOPDT", "OOPDDT", "MSEQCT"]
     models = ["PDT"]
     scarcities = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-    scarcities = [0.4]
-    max_start_time = int(max([p.start_time + p.max_processing_time() for p in processes])/2)
+    scarcities = [0.3]
+    max_start_time = int(max([p.start_time + p.max_processing_time() for p in processes]))
+    max_start_time = 60
     print(f'Max start time: {max_start_time}')
     latex_table = "\\begin{tabular}{|l|" + "c|" * len(scarcities) + "}\n"
     latex_table += "\\hline\n"
@@ -87,16 +88,16 @@ def main():
     RES_1_3_MULTIPLIER = 2.5
     MAX_PHASES = 3
     processes = generate_instance(
-        number_of_processes=100, 
-        arrival_rate=1,
+        number_of_processes=50, 
+        arrival_rate=3,
         max_phases=MAX_PHASES,
         min_base_duration=1.0,
-        max_base_duration=12.0,
+        max_base_duration=5.0,
         min_resource_1_ratio=1.0,
-        resource_1_ratio_center=1.8,
+        resource_1_ratio_center=1.5,
         resource_1_ratio_spread=.5,
         min_resource_2_ratio=1.0,
-        resource_2_ratio_center=1.5,
+        resource_2_ratio_center=2.5,
         resource_2_ratio_spread=.5,
         res_1_2_multiplier=RES_1_2_MULTIPLIER,
         res_1_3_multiplier=RES_1_3_MULTIPLIER,
