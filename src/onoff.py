@@ -44,7 +44,7 @@ def onoff_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True, obj="makespan"
         model.setObjective(gp.quicksum(t * y[n-1, m, t] for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
         # Rounding the addition down for odd length, rounding down the timeslot for even length
-        model.setObjective(gp.quicksum(y[i, m, t] * (int(p[i][m]/2) + int(t/max(int(p[i][m]), 1))) for i in range(1,n-1) for m in range(M) for t in range(T)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(int(p[i][m]/2) + gp.quicksum(y[i, m, t] * t for t in range(T))/max(p[i][m], 1) for i in range(1,n) for m in range(M)), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once (schedule dummy separately, since p[n-1][m] = 0)

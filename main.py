@@ -13,29 +13,29 @@ from src.continuous import continuous_model
 from src.vis_schedule import visualize_pulse_model
 
 
-def model_selector(model: str, n, T, M, R, E, p, L, r, ES, VP):
+def model_selector(model: str, n, T, M, R, E, p, L, r, ES, VP, obj="makespan"):
     if model == "pulse" or model == "PDT":
-        return pulse_model(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP, obj="flow-time")
+        return pulse_model(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP, obj=obj)
     if model == "pulse-disaggregated" or model == "PDDT":
-        return pulse_model_disaggregated(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP)
+        return pulse_model_disaggregated(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP, obj=obj)
     if model == "step" or model == "SDT":
-        return step_model(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP)
+        return step_model(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP, obj=obj)
     if model == "step-disaggregated" or model == "SDDT":
         return step_model_disaggregated(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP)
     if model == "onoff" or model == "OODDT":
-        return onoff_model(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP)
+        return onoff_model(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP, obj=obj)
     if model == "onoff-pulse" or model == "OOPDT":
-        return onoff_pulse_model(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP)
+        return onoff_pulse_model(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP, obj=obj)
     if model == "onoff-pulse-disaggregated" or model == "OOPDDT":
-        return onoff_pulse_model_disaggregated(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP)
+        return onoff_pulse_model_disaggregated(n=n, T=T, M=M, R=R, E=E, p=p, L=L, r=r, ES=ES, VP=VP, obj=obj)
     if model == "continuous" or model == "MSEQCT":
-        return continuous_model(n=n, T=T, M=M, R=R, E=E, ES=ES, VP=VP, p=p, L=L, r=r)
+        return continuous_model(n=n, T=T, M=M, R=R, E=E, ES=ES, VP=VP, p=p, L=L, r=r, obj=obj)
     raise ValueError(f"Unknown model {model}")
 
 
 def test_all_models(processes, MAX_PHASES=3, RES_1_2_MULTIPLIER=2.0, RES_1_3_MULTIPLIER=3.0):
     models = ["PDT", "PDDT", "SDT", "SDDT", "OODDT", "OOPDT", "OOPDDT", "MSEQCT"]
-    models = ["PDT"]
+    models = ["OODDT"]
     scarcities = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     scarcities = [0.3]
     max_start_time = int(max([p.start_time + p.max_processing_time() for p in processes]))
@@ -59,7 +59,7 @@ def test_all_models(processes, MAX_PHASES=3, RES_1_2_MULTIPLIER=2.0, RES_1_3_MUL
             )
             # Solver
             start_time = time.time()
-            model, divisor = model_selector(model=model_name, n=instance["n"], T=instance["T"], M=instance["M"], R=instance["R"], E=instance["E"], p=instance["p"], L=instance["L"], r=instance["r"], ES=instance["ES"], VP=None)
+            model, divisor = model_selector(model=model_name, n=instance["n"], T=instance["T"], M=instance["M"], R=instance["R"], E=instance["E"], p=instance["p"], L=instance["L"], r=instance["r"], ES=instance["ES"], VP=None, obj="flow-time")
             model.optimize()
             if model.status == GRB.INFEASIBLE:
                 print("\033[91mModel infeasible\033[0m")
@@ -88,7 +88,7 @@ def main():
     RES_1_3_MULTIPLIER = 2.5
     MAX_PHASES = 3
     processes = generate_instance(
-        number_of_processes=50, 
+        number_of_processes=20, 
         arrival_rate=3,
         max_phases=MAX_PHASES,
         min_base_duration=1.0,
