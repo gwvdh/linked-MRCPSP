@@ -20,7 +20,8 @@ def generate_instance(number_of_processes: int, max_phases: int = 3,
                       resource_2_ratio_spread: float = 1.0,
                       arrival_rate: float = 0.7,
                       res_1_2_multiplier: float = 2.0,
-                      res_1_3_multiplier: float = 3.0
+                      res_1_3_multiplier: float = 3.0,
+                      job_3_multiplier: float = 1.0
                       ):
     """
     Generates a list of processes with randomized phase profiles.
@@ -74,7 +75,8 @@ def generate_instance(number_of_processes: int, max_phases: int = 3,
                 phase_profiles, 
                 start_time=start_time,
                 res_1_2_multiplier=res_1_2_multiplier,
-                res_1_3_multiplier=res_1_3_multiplier
+                res_1_3_multiplier=res_1_3_multiplier,
+                job_3_multiplier=job_3_multiplier
             ))
             i += 1
     return processes

@@ -5,7 +5,7 @@ from math import gcd
 import time
 from .utils import get_earliest_start_time, get_latest_start_time
 
-def continuous_model(n, T, M, R, E, VP, p, L, r, ES=None, silent=True, obj="makespan"):
+def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="makespan"):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -16,6 +16,7 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, ES=None, silent=True, obj="make
     p: List of processing times for each activity i in each mode m p[i][m]
     L: List of pairs of activity indices (i,j) indicating linked modes
     r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
+    O: List of last jobs indices of each process
     ES: Earliest start time for each activity i
     """
     # Normalize processing times
@@ -52,7 +53,7 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, ES=None, silent=True, obj="make
     if obj == "makespan":
         model.setObjective(S[n-1], GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum(S[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) for i in range(n)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(S[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) for i in O), GRB.MINIMIZE)
 
     # Constraints
     # Connect the start-time variables with the completion-start sequencing variables

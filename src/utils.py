@@ -21,6 +21,7 @@ def get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES=None):
         earliest_starting_times = [0] * n
     else:
         earliest_starting_times = ES
+        return earliest_starting_times
     current_activity = 0
     earliest_starting_times[current_activity] = 0
     for i in range(1,n):

@@ -18,66 +18,75 @@ def get_or_instance(processes, scarcity, max_start_time,
     :param res_1_2_multiplier: Multiplier for resource 1 to resource 2 processing time
     :param res_1_3_multiplier: Multiplier for resource 1 to resource 3 processing time
     """
-    print(f"Scarcity: {scarcity}")
     min_max_demands = get_min_max_demands(processes=processes, max_phases=max_phases) 
-   # min_max_demands[0][2] = (1, max(3,min_max_demands[0][2][1]))
-   # min_max_demands[1][2] = (1, max(3,min_max_demands[1][2][1]))
-   # min_max_demands[2][2] = (1, max(3,min_max_demands[2][2][1]))
-    print(f"min_max_demands: {min_max_demands}")
-    # min_max_demands[phase][resource]
     capacities = [[get_capacity(min_demand, max_demand, scarcity) for min_demand, max_demand in min_max_demands[i]] for i in range(max_phases)]
     # Translate to solver instance
-    n = max_phases * 3 * len(processes) + 2 # #phases * #jobs_per_phase * #processes
+    n = 0 
     T = int(max_start_time)
     M = len(Mode)
     R = [capacities[i][j] for i in range(max_phases) for j in range(len(ResourceLevel))] # phase | resource
-    print(f"Resource capacities: {R}")
     E = [] # nxn
     L = [] # nxn
-    p = [[0 for _ in range(M)] for _ in range(n)] # (n+2)*M
-    r = [[[0 for _ in range(len(ResourceLevel)*max_phases)] for _ in range(M)] for _ in range(n)] # n*M*R
-    ES = [0 for _ in range(n)] # n
+    p = []
+    r = []
+    ES = [] # n
+    O = [] # O(n) Last jobs of each process
     # Populate E, L, p, r
-    task_counter = 1
+    n += 1
+    p.append([0 for _ in range(M)]) # (n+2)*M
+    r.append([[0 for _ in range(len(ResourceLevel)*max_phases)] for _ in range(M)]) # n*M*R
+    ES.append(0) # n
     for process in processes:
         for i, phase in enumerate(process.phases):
             if process.network_type == NetworkType.SINGLE and i >= 1: 
-                task_counter += 3
                 continue
             if process.network_type == NetworkType.DOUBLE and i >= 2: 
-                task_counter += 3
                 continue
             for j in range(3):
                 # Precedence relations
                 if i == 0 and j == 0:
-                    E.append([0, task_counter])
+                    E.append([0, n])
                 elif i == 1 and j == 0 and process.network_type == NetworkType.INTREE:
-                    E.append([0, task_counter])
+                    E.append([0, n])
                 elif i == 2 and j == 0 and process.network_type == NetworkType.INTREE:
-                    E.append([task_counter-1, task_counter])
-                    E.append([task_counter-4, task_counter])
+                    E.append([n-1, n])
+                    E.append([n-4, n])
                 elif i == 2 and j == 2:
-                    E.append([task_counter-1, task_counter])
-                    E.append([task_counter, n-1])
+                    E.append([n-1, n])
+                    O.append(n)
                 else:
-                    E.append([task_counter-1, task_counter])
+                    E.append([n-1, n])
                 if j == 2 and i == 1 and process.network_type == NetworkType.DOUBLE:
-                    E.append([task_counter, n-1])
+                    O.append(n)
                 if j == 2 and i == 0 and process.network_type == NetworkType.SINGLE:
-                    E.append([task_counter, n-1])
+                    O.append(n)
                 # Linked modes
                 if j > 0:
-                    L.append([task_counter-1, task_counter])
+                    L.append([n-1, n])
                 # processing times and resource requirements
+                p.append([0 for _ in range(M)])
+                r.append([[0 for _ in range(len(ResourceLevel)*max_phases)] for _ in range(M)])
                 for mode in Mode:
-                    p[task_counter][mode.value] = process.tasks[i][j].duration[mode.value]
+                    p[n][mode.value] = process.tasks[i][j].duration[mode.value]
                     resource_demand = process.tasks[i][j].resource[mode.value]
                     for resource in ResourceLevel:
                         if resource == resource_demand:
-                            r[task_counter][mode.value][i*max_phases + resource.value] = 1
+                            r[n][mode.value][i*max_phases + resource.value] = 1
                             break
-                ES[task_counter] = process.start_time
-                task_counter += 1
+                ES.append(process.start_time)
+                n += 1
+    # Add last job
+    n += 1
+    p.append([0 for _ in range(M)]) # (n+2)*M
+    r.append([[0 for _ in range(len(ResourceLevel)*max_phases)] for _ in range(M)]) # n*M*R
+    ES.append(0) # n
+    # Add last jobs of each process
+    for job_index in O:
+        E.append([job_index, n-1])
+
+    # VP: List of pairs of activity indices (i,j) that are not precedence-related
+    VP = [[i,j] for i in range(n) for j in range(n) if [i,j] not in E and [j,i] not in E and i != j]
+
     instance = {
         "n": n,
         "T": T,
@@ -87,6 +96,8 @@ def get_or_instance(processes, scarcity, max_start_time,
         "L": L,
         "p": p,
         "r": r,
-        "ES": ES
+        "O": O,
+        "ES": ES,
+        "VP": VP,
     }
     return instance

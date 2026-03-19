@@ -2,9 +2,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 from gurobipy import GRB
+from instances.definitions import NetworkType
 
 
-def visualize_pulse_model(model, n, T, M, R, p, r, divisor=1, activity_names=None, filename="schedule"):
+def visualize_pulse_model(model, n, T, M, R, p, r, processes, divisor=1, activity_names=None, filename="schedule"):
     """
     Visualizes the solution of a solved pulse_model.
 
@@ -15,6 +16,7 @@ def visualize_pulse_model(model, n, T, M, R, p, r, divisor=1, activity_names=Non
     R:              List of resource capacities R[k]
     p:              Processing times p[i][m] (pre-normalization)
     r:              Resource requirements r[i][m][k]
+    processes:      List of processes
     divisor:        Normalization divisor returned by pulse_model
     activity_names: Optional list of labels for each activity
     """
@@ -44,12 +46,13 @@ def visualize_pulse_model(model, n, T, M, R, p, r, divisor=1, activity_names=Non
     # ── Colour palette ────────────────────────────────────────────────────────
     # Activity 0 (dummy source) and n-1 (dummy sink) each get a distinct colour.
     # Activities 1 to n-2 are grouped in sets of 9 sharing the same colour.
-    n_groups = -((-(n - 2)) // 9)  # ceil((n-2) / 9)
-    group_cmap = plt.colormaps["prism"]
-    group_colors = [group_cmap(g / n_groups) for g in range(n_groups)]
+    n_groups = len(processes)+2
+    n_middle = len(processes)
+    group_cmap = plt.colormaps["tab20"]
+    sample_points = np.linspace(0, 1, n_middle + 2, endpoint=False)[1:]
 
     colors = ["gold"]  # activity 0 (dummy source)
-    colors += [group_colors[(i - 1) // 9] for i in range(1, n - 1)]
+    colors += [group_cmap(t) for t in sample_points[:n_middle]]
     colors.append("crimson")  # activity n-1 (dummy sink)
 
     n_plots = 1 + K
@@ -67,38 +70,43 @@ def visualize_pulse_model(model, n, T, M, R, p, r, divisor=1, activity_names=Non
     ax_gantt = axes[0]
     ax_gantt.set_title("Schedule – Gantt Chart", fontweight="bold", fontsize=13)
 
+    current_color = 1
+    y = 1
+
     yticks, ylabels = [], []
-    for i, (name, color) in enumerate(zip(activity_names, colors)):
-        y = n - 1 - i  # top-to-bottom order
-        yticks.append(y)
-        ylabels.append(name)
 
-        if i not in schedule:
-            continue
+    for i, process in enumerate(processes):
+        for phase in range(3):
+            if process.network_type == NetworkType.SINGLE and phase >= 1: continue
+            if process.network_type == NetworkType.DOUBLE and phase >= 2: continue
+            for j in range(3):
+                yticks.append(y)
+                ylabels.append(activity_names[y])
+                m, t_start, t_end = schedule[y]
+                width = t_end - t_start
 
-        m, t_start, t_end = schedule[i]
-        width = t_end - t_start
-
-        bar = mpatches.FancyBboxPatch(
-            (t_start, y - 0.4),
-            width,
-            0.8,
-            boxstyle="round,pad=0.03",
-            facecolor=color,
-            edgecolor="black",
-            linewidth=0.8,
-        )
-        ax_gantt.add_patch(bar)
-        ax_gantt.text(
-            t_start + width / 2,
-            y,
-            f"m{(i - 1) // 9}",
-            ha="center",
-            va="center",
-            fontsize=8,
-            fontweight="bold",
-            color="black",
-        )
+                bar = mpatches.FancyBboxPatch(
+                    (t_start, y - 0.4),
+                    width,
+                    0.8,
+                    boxstyle="round,pad=0.03",
+                    facecolor=colors[current_color],
+                    edgecolor="black",
+                    linewidth=0.8,
+                )
+                ax_gantt.add_patch(bar)
+                ax_gantt.text(
+                    t_start + width / 2,
+                    y,
+                    f"m{i}",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    fontweight="bold",
+                    color="black",
+                )
+                y += 1
+        current_color += 1
 
     ax_gantt.set_xlim(0, T_norm)
     ax_gantt.set_ylim(-0.7, n - 0.3)

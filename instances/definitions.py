@@ -39,17 +39,18 @@ class PhaseProfile:
 
 
 class Process:
-    def __init__(self, network_type: NetworkType, phases: List[PhaseProfile], start_time: int = 0, res_1_2_multiplier: float = 2.0, res_1_3_multiplier: float = 3.0):
+    def __init__(self, network_type: NetworkType, phases: List[PhaseProfile], start_time: int = 0, res_1_2_multiplier: float = 2.0, res_1_3_multiplier: float = 3.0, job_3_multiplier: float = 1.0):
         self.network_type = network_type
         self.phases = phases
         self.start_time = start_time
         self.resource_1_2_multiplier = res_1_2_multiplier
         self.resource_1_3_multiplier = res_1_3_multiplier
+        self.job_3_multiplier = job_3_multiplier
         self.tasks = [[None for _ in range(3)] for _ in range(len(self.phases))] 
         self.define_tasks()
 
     def max_processing_time(self):
-        return sum(phase.resource_1_duration + phase.resource_2_duration + phase.resource_3_duration for phase in self.phases)
+        return max(phase.resource_1_duration + phase.resource_2_duration + phase.resource_3_duration for phase in self.phases)*len(self.phases)
 
     def get_min_resource_demand_mode(self, resource: ResourceLevel):
         """For each phase, select the mode with the minimum demand for the given resource"""
@@ -76,7 +77,7 @@ class Process:
                     phases[phase_id] = (mode, resource_demand)
         return [phase[0] for phase in phases]
 
-    def define_tasks(self, variance: float = 0.3) -> List[List[Task]]:
+    def define_tasks(self, variance: float = 0.2) -> List[List[Task]]:
         for i, phase in enumerate(self.phases):
             if self.network_type == NetworkType.SINGLE and i >= 1: continue
             if self.network_type == NetworkType.DOUBLE and i >= 2: continue
@@ -101,8 +102,8 @@ class Process:
                     )
                 elif j == 2:
                     self.tasks[i][j] = Task(
-                        [int(phase.resource_3_duration*np.random.normal(1.0, variance)), 
-                         int(phase.resource_3_duration*np.random.normal(1.0, variance)), 
+                        [int(phase.resource_3_duration*np.random.normal(1.0, variance)*self.job_3_multiplier), 
+                         int(phase.resource_3_duration*np.random.normal(1.0, variance)*self.job_3_multiplier), 
                          0
                          ],
                         [ResourceLevel.L3, ResourceLevel.L3, None],

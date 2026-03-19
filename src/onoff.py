@@ -5,7 +5,7 @@ from math import gcd
 import time
 from .utils import get_earliest_start_time, get_latest_start_time
 
-def onoff_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True, obj="makespan"):
+def onoff_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan"):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -15,6 +15,7 @@ def onoff_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True, obj="makespan"
     p: List of processing times for each activity i in each mode m p[i][m]
     L: List of pairs of activity indices (i,j) indicating linked modes
     r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
+    O: List of last jobs indices of each process
     ES: Earliest start time for each activity i
     """
     # Normalize processing times
@@ -44,7 +45,7 @@ def onoff_model(n, T, M, R, E, p, L, r, VP, ES=None, silent=True, obj="makespan"
         model.setObjective(gp.quicksum(t * y[n-1, m, t] for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
         # Rounding the addition down for odd length, rounding down the timeslot for even length
-        model.setObjective(gp.quicksum(int(p[i][m]/2) + gp.quicksum(y[i, m, t] * t for t in range(T))/max(p[i][m], 1) for i in range(1,n) for m in range(M)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(gp.quicksum(y[i, m, t] * (t-earliest_starting_times[i] + (p[i][m]/2 + 0.5 if p[i][m] > 0 else 0)) for t in range(T))/max(p[i][m], 1) for i in O for m in range(M)), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once (schedule dummy separately, since p[n-1][m] = 0)
