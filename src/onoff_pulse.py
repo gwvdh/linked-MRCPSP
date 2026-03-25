@@ -5,7 +5,7 @@ from math import gcd
 import time
 from .utils import get_earliest_start_time, get_latest_start_time
 
-def onoff_pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan"):
+def onoff_pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -35,6 +35,7 @@ def onoff_pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="
     model = gp.Model("onoff_pulse")
     if silent:
         model.setParam('OutputFlag', False)
+    model.setParam('TimeLimit', timeout)
 
     # Pulse variables
     pulse_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
@@ -75,7 +76,7 @@ def onoff_pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="
     
     return model, divisor
 
-def onoff_pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan"):
+def onoff_pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -105,6 +106,7 @@ def onoff_pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, sile
     model = gp.Model("onoff_pulse_disaggregated")
     if silent:
         model.setParam('OutputFlag', False)
+    model.setParam('TimeLimit', timeout)
 
     # Pulse variables
     pulse_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]

@@ -19,6 +19,7 @@ def generate_instance(number_of_processes: int, max_phases: int = 3,
                       resource_2_ratio_center: float = 1.3,
                       resource_2_ratio_spread: float = 1.0,
                       arrival_rate: float = 0.7,
+                      batch_size: float = 3.0,
                       res_1_2_multiplier: float = 2.0,
                       res_1_3_multiplier: float = 3.0,
                       job_3_multiplier: float = 1.0
@@ -36,6 +37,7 @@ def generate_instance(number_of_processes: int, max_phases: int = 3,
     :param resource_2_ratio_center: Center of the resource 2 ratio normal distribution
     :param resource_2_ratio_spread: Spread of the resource 2 ratio normal distribution
     :param arrival_rate: Arrival rate of the processes
+    :param batch_size: Number of processes to generate in a batch
     :param res_1_2_multiplier: Multiplier for resource 1 to resource 2 processing time
     :param res_1_3_multiplier: Multiplier for resource 1 to resource 3 processing time
     """
@@ -54,16 +56,16 @@ def generate_instance(number_of_processes: int, max_phases: int = 3,
     start_time = 0
     max_periods = number_of_processes * 3
     interarrival_times = np.random.default_rng().exponential(
-        scale=arrival_rate, size=max_periods)
-    arrivals = np.random.poisson(arrival_rate, max_periods)
+        scale=1/arrival_rate, size=max_periods)
+    arrivals = np.random.poisson(batch_size, max_periods)
     i = 0
     period = 0
     while i < number_of_processes:
         if period > 0:
             start_time += int(interarrival_times[period])
-        batch_size = arrivals[period]
+        _batch_size = arrivals[period]
         period += 1
-        for j in range(batch_size):
+        for j in range(_batch_size):
             if i >= number_of_processes:
                 break
             process_structure = random.choice([
@@ -151,7 +153,7 @@ def simulate_processes(processes: List[Process], max_phases: int):
         for i, phase_tasks in enumerate(process.tasks):
             for task in phase_tasks:
                 for t in range(task.duration[random_modes[i]]):
-                    phase_timelines[i][task.earliest_start + t][task.resource[random_modes[i]]] += 1
+                    phase_timelines[i][task.start_time + t][task.resource[random_modes[i]]] += 1
     return [dict(sorted(tl.items())) for tl in phase_timelines]
 
 
@@ -198,22 +200,28 @@ def get_min_max_demands(processes, max_phases=3):
 
 
     min_demands = get_extermal_demands(timelines_min, get_min=True)
+    min_demands = [[0, 0, 1] for i in range(max_phases)]
     max_demands = get_extermal_demands(timelines_max, get_min=False)
 
     min_max_demands = [[(min_demands[i][r.value], max_demands[i][r.value]) for r in ResourceLevel] for i in range(max_phases)]
     return min_max_demands
 
 def get_capacity(min_demand, max_demand, scarcity):
-    return int(round(min_demand + scarcity * (max_demand - min_demand)))
+    return int(min_demand + round(scarcity * (max_demand - min_demand)))
 
 
 if __name__ == "__main__":
     NUMBER_OF_PROCESSES = 50
+    BATCH_SIZE = 3.0
     ARRIVAL_RATE = 0.7
     ITERATIONS = 50
 
     print("Generating instances...")
-    processes = generate_instance(number_of_processes=NUMBER_OF_PROCESSES, arrival_rate=ARRIVAL_RATE)
+    processes = generate_instance(
+        number_of_processes=NUMBER_OF_PROCESSES, 
+        arrival_rate=ARRIVAL_RATE,
+        batch_size=BATCH_SIZE,
+    )
 
     scarcities = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     for scarcity in scarcities:

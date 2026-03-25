@@ -50,7 +50,7 @@ class Process:
         self.define_tasks()
 
     def max_processing_time(self):
-        return max(phase.resource_1_duration + phase.resource_2_duration + phase.resource_3_duration for phase in self.phases)*len(self.phases)
+        return sum(phase.resource_1_duration + phase.resource_2_duration + phase.resource_3_duration for phase in self.phases)
 
     def get_min_resource_demand_mode(self, resource: ResourceLevel):
         """For each phase, select the mode with the minimum demand for the given resource"""

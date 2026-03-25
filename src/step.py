@@ -5,7 +5,7 @@ from math import gcd
 import time
 from .utils import get_earliest_start_time, get_latest_start_time
 
-def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan"):
+def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -35,16 +35,17 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     model = gp.Model("step")
     if silent:
         model.setParam('OutputFlag', False)
+    model.setParam('TimeLimit', timeout)
 
     # Step variables
     step_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
-    z = model.addVars(step_sets, vtype=GRB.BINARY, name="pulse")
+    z = model.addVars(step_sets, vtype=GRB.BINARY, name="step")
 
     # Objective
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m]) for t in range(1,T) for m in range(M) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(1,T) for m in range(M) for i in O), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once
@@ -75,7 +76,7 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     
     return model, divisor
 
-def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan"):
+def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -105,16 +106,17 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     model = gp.Model("step_disaggregated")
     if silent:
         model.setParam('OutputFlag', False)
+    model.setParam('TimeLimit', timeout)
 
     # Step variables
     step_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
-    z = model.addVars(step_sets, vtype=GRB.BINARY, name="pulse")
+    z = model.addVars(step_sets, vtype=GRB.BINARY, name="step")
 
     # Objective
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m]) for t in range(1,T) for m in range(M) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(1,T) for m in range(M) for i in O), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once
@@ -124,7 +126,10 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M) for t in range(1, T)), name="started_same_mode")
 
     # Precedence relations between jobs (i,j)
-    model.addConstrs((gp.quicksum(z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0 for m in range(M)) >= gp.quicksum(z[j, m, t] for m in range(M)) for i,j in E for t in range(1,T)), name="precedence_disaggregated")
+    model.addConstrs((
+        gp.quicksum(z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0 for m in range(M)) >= 
+        gp.quicksum(z[j, m, t] for m in range(M)) for i,j in E for t in range(T)), 
+        name="precedence_disaggregated")
 
     # Resource availability
     model.addConstrs((gp.quicksum(r[i][m][k] * (z[i, m, t] - (z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0)) for m in range(M) for i in range(n)) <= R[k] 

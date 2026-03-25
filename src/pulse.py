@@ -5,7 +5,7 @@ from math import gcd
 import time
 from .utils import get_earliest_start_time, get_latest_start_time
 
-def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan"):
+def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -36,6 +36,7 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     model = gp.Model("pulse")
     if silent:
         model.setParam('OutputFlag', False)
+    model.setParam('TimeLimit', timeout)
 
     # Pulse variables
     pulse_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
@@ -71,7 +72,7 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     
     return model, divisor
 
-def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan"):
+def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -101,6 +102,7 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=Tru
     model = gp.Model("pulse_disaggregated")
     if silent:
         model.setParam('OutputFlag', False)
+    model.setParam('TimeLimit', timeout)
 
     # Pulse variables
     pulse_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]

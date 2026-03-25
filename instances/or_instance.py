@@ -20,6 +20,7 @@ def get_or_instance(processes, scarcity, max_start_time,
     """
     min_max_demands = get_min_max_demands(processes=processes, max_phases=max_phases) 
     capacities = [[get_capacity(min_demand, max_demand, scarcity) for min_demand, max_demand in min_max_demands[i]] for i in range(max_phases)]
+    print(f"Capacities: {capacities}")
     # Translate to solver instance
     n = 0 
     T = int(max_start_time)

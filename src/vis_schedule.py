@@ -32,7 +32,7 @@ def visualize_pulse_model(model, n, T, M, R, p, r, processes, divisor=1, activit
 
     # ── Extract solution ──────────────────────────────────────────────────────
     schedule = {}  # i -> (m, t_start, t_end) in normalized time
-    vars_map = {v.varName: v.x for v in model.getVars()}
+    vars_map = {v.VarName: v.X for v in model.getVars()}
 
     for i in range(n):
         for m in range(M):
@@ -164,3 +164,4 @@ def visualize_pulse_model(model, n, T, M, R, p, r, processes, divisor=1, activit
 
     plt.tight_layout(pad=1.5)
     plt.savefig(f"plots/{filename}.png")
+    plt.close()

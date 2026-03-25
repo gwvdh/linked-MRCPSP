@@ -60,3 +60,4 @@ def plot_timelines(phase_timelines: List[Dict[int, Dict[ResourceLevel, int]]], s
     plt.xlabel("Time (Simulation Ticks)")
     plt.tight_layout()
     plt.savefig(f"plots/{filename}")
+    plt.close()

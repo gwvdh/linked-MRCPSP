@@ -13,6 +13,8 @@ testset*
 !testsets_final*
 .pgf
 plots/
+*.db
+data/
 
 eval_archive*
 ra_pst.xml
