@@ -1,0 +1,305 @@
+<description xmlns="http://cpee.org/ns/description/1.0">
+	<call id="a1" endpoint="">
+		<parameters>
+			<label>Declaration_SUBMITTED</label>
+			<method>:post</method>
+			<arguments/>
+		</parameters>
+		<annotations>
+			<_timing>
+				<_timing_weight/>
+				<_timing_avg/>
+				<explanations/>
+			</_timing>
+			<_shifting>
+				<_shifting_type>Duration</_shifting_type>
+			</_shifting>
+			<_context_data_analysis>
+				<probes/>
+				<ips/>
+			</_context_data_analysis>
+			<report>
+				<url/>
+			</report>
+			<_notes>
+				<_notes_general/>
+			</_notes>
+		</annotations>
+		<documentation>
+			<input/>
+			<output/>
+			<implementation>
+				<description/>
+			</implementation>
+		</documentation>
+		<resources allocated_to="not_allocated"/>
+		<expectedready/>
+		<plannedstart/>
+		<plannedend/>
+		<children>
+			<resource id="res_1" name="EMPLOYEE">
+				<resprofile task="report" id="role_9" name="EMPLOYEE" role="role_9">
+					<measures>
+						<cost>20</cost>
+					</measures>
+					<children/>
+				</resprofile>
+			</resource>
+		</children>
+	</call>
+	<call id="a2" endpoint="">
+		<parameters>
+			<label>Declaration_APPROVED</label>
+			<method>:post</method>
+			<arguments/>
+		</parameters>
+		<annotations>
+			<_timing>
+				<_timing_weight/>
+				<_timing_avg/>
+				<explanations/>
+			</_timing>
+			<_shifting>
+				<_shifting_type>Duration</_shifting_type>
+			</_shifting>
+			<_context_data_analysis>
+				<probes/>
+				<ips/>
+			</_context_data_analysis>
+			<report>
+				<url/>
+			</report>
+			<_notes>
+				<_notes_general/>
+			</_notes>
+		</annotations>
+		<documentation>
+			<input/>
+			<output/>
+			<implementation>
+				<description/>
+			</implementation>
+		</documentation>
+		<resources allocated_to="not_allocated"/>
+		<expectedready/>
+		<plannedstart/>
+		<plannedend/>
+		<children>
+			<resource id="res_2" name="Administration">
+				<resprofile task="Declaration_APPROVED" id="role_10" name="Admint_APPR" role="rp3">
+					<measures>
+						<cost>5</cost>
+					</measures>
+					<children/>
+				</resprofile>
+			</resource>
+			<resource id="res_3" name="Supervisor">
+				<resprofile task="Declaration_APPROVED" id="role_10" name="Sup_APPR" role="rp3">
+					<measures>
+						<cost>30</cost>
+					</measures>
+					<changepattern type="delete">
+						<parameters>
+							<direction>any</direction>
+						</parameters>
+						<description>
+					</description>
+					</changepattern>
+					<children>
+						<manipulate id="a3" label="Declaration_APPROVED1" type="delete" direction="any">
+							<resources allocated_to="not_allocated">
+								<resource>Supervisor</resource>
+							</resources>
+						</manipulate>
+          </children>
+				</resprofile>
+			</resource>
+		</children>
+	</call>
+
+	<call id="a3" endpoint="">
+		<parameters>
+			<label>Declaration_APPROVED1</label>
+			<method>:post</method>
+			<arguments/>
+		</parameters>
+		<annotations>
+			<_timing>
+				<_timing_weight/>
+				<_timing_avg/>
+				<explanations/>
+			</_timing>
+			<_shifting>
+				<_shifting_type>Duration</_shifting_type>
+			</_shifting>
+			<_context_data_analysis>
+				<probes/>
+				<ips/>
+			</_context_data_analysis>
+			<report>
+				<url/>
+			</report>
+			<_notes>
+				<_notes_general/>
+			</_notes>
+		</annotations>
+		<documentation>
+			<input/>
+			<output/>
+			<implementation>
+				<description/>
+			</implementation>
+		</documentation>
+		<resources allocated_to="not_allocated"/>
+		<expectedready/>
+		<plannedstart/>
+		<plannedend/>
+		<children>
+			<resource id="res_3" name="Supervisor">
+				<resprofile task="Declaration_APPROVED1" id="role_11" name="Sup_final_APPR" role="rp3">
+					<measures>
+						<cost>5</cost>
+					</measures>
+					<children/>
+				</resprofile>
+			</resource>
+			<resource id="res_4" name="Budget_Owner">
+				<resprofile task="Declaration_APPROVED" id="role_10" name="Budget_Owner_APPR" role="rp5">
+					<measures>
+						<cost>10</cost>
+					</measures>
+					<changepattern type="insert">
+						<parameters>
+							<direction>after</direction>
+						</parameters>
+						<description>
+							<manipulate id="a3a" label="Declaration_APPROVED2" type="insert" direction="after">
+								<resources allocated_to="not_allocated">
+									<resource>Supervisor</resource>
+								</resources>
+							</manipulate>
+						</description>
+					</changepattern>
+					<children>
+						<manipulate id="a3a" label="Declaration_APPROVED2" type="insert" direction="after">
+							<resources allocated_to="not_allocated">
+								<resource>Supervisor</resource>
+							</resources>
+							<children>
+								<resource id="res_3" name="Supervisor">
+									<resprofile task="Declaration_APPROVED2" id="role_12" name="Supervisor_APPR2" role="Supervisor">
+										<measures>
+											<cost>5</cost>
+										</measures>
+										<children/>
+									</resprofile>
+								</resource>
+							</children>
+						</manipulate>
+					</children>
+				</resprofile>
+			</resource>
+		</children>
+	</call>
+
+	<call id="a4" endpoint="">
+		<parameters>
+			<label>Request Payment</label>
+			<method>:post</method>
+			<arguments/>
+		</parameters>
+		<annotations>
+			<_timing>
+				<_timing_weight/>
+				<_timing_avg/>
+				<explanations/>
+			</_timing>
+			<_shifting>
+				<_shifting_type>Duration</_shifting_type>
+			</_shifting>
+			<_context_data_analysis>
+				<probes/>
+				<ips/>
+			</_context_data_analysis>
+			<report>
+				<url/>
+			</report>
+			<_notes>
+				<_notes_general/>
+			</_notes>
+		</annotations>
+		<documentation>
+			<input/>
+			<output/>
+			<implementation>
+				<description/>
+			</implementation>
+		</documentation>
+		<resources allocated_to="not_allocated"/>
+		<expectedready/>
+		<plannedstart/>
+		<plannedend/>
+		<children>
+			<resource id="res_5" name="System">
+				<resprofile task="Request Payment" id="role_9" name="System" role="role_9">
+					<measures>
+						<cost>0</cost>
+					</measures>
+					<children/>
+				</resprofile>
+			</resource>
+		</children>
+	</call>
+
+	<call id="a5" endpoint="">
+		<parameters>
+			<label>Payment Handled</label>
+			<method>:post</method>
+			<arguments/>
+		</parameters>
+		<annotations>
+			<_timing>
+				<_timing_weight/>
+				<_timing_avg/>
+				<explanations/>
+			</_timing>
+			<_shifting>
+				<_shifting_type>Duration</_shifting_type>
+			</_shifting>
+			<_context_data_analysis>
+				<probes/>
+				<ips/>
+			</_context_data_analysis>
+			<report>
+				<url/>
+			</report>
+			<_notes>
+				<_notes_general/>
+			</_notes>
+		</annotations>
+		<documentation>
+			<input/>
+			<output/>
+			<implementation>
+				<description/>
+			</implementation>
+		</documentation>
+		<resources allocated_to="not_allocated"/>
+		<expectedready/>
+		<plannedstart/>
+		<plannedend/>
+		<children>
+			<resource id="res_5" name="System">
+				<resprofile task="Payment Handled" id="role_8" name="System" role="role_8">
+					<measures>
+						<cost>0</cost>
+					</measures>
+					<children/>
+				</resprofile>
+			</resource>
+		</children>
+	</call>
+</description>
+
+
+

@@ -1,98 +1,139 @@
-from instances.generator import get_min_max_demands, get_capacity
-from instances.definitions import ResourceLevel, Mode, NetworkType
+from __future__ import annotations
 
-from src.pulse import pulse_model
+from typing import Any, Dict, List, Optional, Tuple
+
+from .generator import get_min_max_demands, get_capacity
+from .definitions import Process, NetworkType
+from .xml_parser import RA_PST
 
 
-def get_or_instance(processes, scarcity, max_start_time, 
-                    max_phases=3,
-                    res_1_2_multiplier=2.0,
-                    res_1_3_multiplier=3.0
-                    ):
+def get_or_instance(
+    processes: List[Process],
+    scarcity: float,
+    max_start_time: int,
+    ra_pst: RA_PST,
+    max_phases: int = 3,
+) -> Dict[str, Any]:
     """
-    Translate the generated processes into an OR fiendly instance
-    :param processes: List of processes
-    :param scarcity: Resource scarcity
-    :param max_start_time: Maximum start time of the processes
-    :param max_phases: Maximum number of phases
-    :param res_1_2_multiplier: Multiplier for resource 1 to resource 2 processing time
-    :param res_1_3_multiplier: Multiplier for resource 1 to resource 3 processing time
+    Translate generated processes into an OR instance. 
+
+    Returns a dict with keys: n, T, M, R, E, L, p, r, O, ES, VP.
     """
-    min_max_demands = get_min_max_demands(processes=processes, max_phases=max_phases) 
-    capacities = [[get_capacity(min_demand, max_demand, scarcity) for min_demand, max_demand in min_max_demands[i]] for i in range(max_phases)]
-    print(f"Capacities: {capacities}")
-    # Translate to solver instance
-    n = 0 
-    T = int(max_start_time)
-    M = len(Mode)
-    R = [capacities[i][j] for i in range(max_phases) for j in range(len(ResourceLevel))] # phase | resource
-    E = [] # nxn
-    L = [] # nxn
-    p = []
-    r = []
-    ES = [] # n
-    O = [] # O(n) Last jobs of each process
-    # Populate E, L, p, r
-    n += 1
-    p.append([0 for _ in range(M)]) # (n+2)*M
-    r.append([[0 for _ in range(len(ResourceLevel)*max_phases)] for _ in range(M)]) # n*M*R
-    ES.append(0) # n
+    n_resources = ra_pst.get_number_of_resources()
+    M = ra_pst.get_number_of_modes()
+
+    min_max = get_min_max_demands(processes=processes, max_phases=max_phases)
+    capacities: List[List[int]] = [
+        [
+            get_capacity(mn, mx, scarcity)
+            for mn, mx in min_max[i]
+        ]
+        for i in range(max_phases)
+    ]
+    R: List[int] = [
+        capacities[i][j]
+        for i in range(max_phases)
+        for j in range(n_resources)
+    ]
+    total_resources = max_phases * n_resources
+
+    def _zero_p() -> List[int]:
+        return [0] * M
+
+    def _zero_r() -> List[List[int]]:
+        return [[0] * total_resources for _ in range(M)]
+
+    job_idx = 1          # next job index to assign
+    p: List[List[int]] = [_zero_p()]
+    r: List[List[List[int]]] = [_zero_r()]
+    ES: List[int] = [0]
+    E: List[List[int]] = []   # precedence pairs [i, j]  (i before j)
+    L: List[List[int]] = []   # linked-mode pairs
+    O: List[int] = []         # last real job of each process
+
+    # phase_last_job[phase_index] = job index of last task in that phase
+    # (used to wire inter-phase precedences)
     for process in processes:
-        for i, phase in enumerate(process.phases):
-            if process.network_type == NetworkType.SINGLE and i >= 1: 
-                continue
-            if process.network_type == NetworkType.DOUBLE and i >= 2: 
-                continue
-            for j in range(3):
-                # Precedence relations
-                if i == 0 and j == 0:
-                    E.append([0, n])
-                elif i == 1 and j == 0 and process.network_type == NetworkType.INTREE:
-                    E.append([0, n])
-                elif i == 2 and j == 0 and process.network_type == NetworkType.INTREE:
-                    E.append([n-1, n])
-                    E.append([n-4, n])
-                elif i == 2 and j == 2:
-                    E.append([n-1, n])
-                    O.append(n)
+        n_active = len(process.network_type.value)
+        # first_job[phase] / last_job[phase] within this process
+        phase_first: List[Optional[int]] = [None] * n_active
+        phase_last: List[Optional[int]] = [None] * n_active
+
+        for i in range(n_active):
+            phase_tasks = process.tasks[i]
+            n_tasks_in_phase = len(phase_tasks)
+
+            for j, task in enumerate(phase_tasks):
+                # ---- precedence edges --------------------------------- #
+                if j == 0:
+                    # First task of this phase
+                    preds = process.network_type.value[i]
+
+                    if not preds:
+                        # No phase predecessor → connect from source
+                        E.append([0, job_idx])
+                    else:
+                        for pred_phase in preds:
+                            if phase_last[pred_phase] is not None:
+                                E.append(
+                                    [phase_last[pred_phase], job_idx]
+                                )
+                    phase_first[i] = job_idx
                 else:
-                    E.append([n-1, n])
-                if j == 2 and i == 1 and process.network_type == NetworkType.DOUBLE:
-                    O.append(n)
-                if j == 2 and i == 0 and process.network_type == NetworkType.SINGLE:
-                    O.append(n)
-                # Linked modes
+                    # Sequential within phase
+                    E.append([job_idx - 1, job_idx])
+
+                # ---- linked-mode pairs -------------------------------- #
                 if j > 0:
-                    L.append([n-1, n])
-                # processing times and resource requirements
-                p.append([0 for _ in range(M)])
-                r.append([[0 for _ in range(len(ResourceLevel)*max_phases)] for _ in range(M)])
-                for mode in Mode:
-                    p[n][mode.value] = process.tasks[i][j].duration[mode.value]
-                    resource_demand = process.tasks[i][j].resource[mode.value]
-                    for resource in ResourceLevel:
-                        if resource == resource_demand:
-                            r[n][mode.value][i*max_phases + resource.value] = 1
-                            break
+                    L.append([job_idx - 1, job_idx])
+
+                # ---- processing times & resource requirements --------- #
+                p.append(_zero_p())
+                r.append(_zero_r())
+                for m in range(M):
+                    p[job_idx][m] = task.duration[m]
+                    res_idx: Optional[int] = task.resource[m]
+                    if res_idx is not None:
+                        # Offset by phase so each (phase, resource) pair
+                        # maps to a unique column in r
+                        col = i * n_resources + res_idx
+                        r[job_idx][m][col] = 1
+
                 ES.append(process.start_time)
-                n += 1
-    # Add last job
-    n += 1
-    p.append([0 for _ in range(M)]) # (n+2)*M
-    r.append([[0 for _ in range(len(ResourceLevel)*max_phases)] for _ in range(M)]) # n*M*R
-    ES.append(0) # n
-    # Add last jobs of each process
-    for job_index in O:
-        E.append([job_index, n-1])
 
-    # VP: List of pairs of activity indices (i,j) that are not precedence-related
-    VP = [[i,j] for i in range(n) for j in range(n) if [i,j] not in E and [j,i] not in E and i != j]
+                if j == n_tasks_in_phase - 1:
+                    phase_last[i] = job_idx
 
-    instance = {
+                job_idx += 1
+
+        # Last task of the final active phase → connect to sink later
+        last_phase = n_active - 1
+        if phase_last[last_phase] is not None:
+            O.append(phase_last[last_phase])
+
+    # Sink dummy job
+    sink = job_idx
+    p.append(_zero_p())
+    r.append(_zero_r())
+    ES.append(0)
+    for last_job in O:
+        E.append([last_job, sink])
+    n = sink + 1
+
+    e_set = {(a, b) for a, b in E} | {(b, a) for a, b in E}
+    VP = [] 
+    VP = [ # Inverse of precedence pairs. WARNING: it may be very large!
+        [i, j]
+        for i in range(n)
+        for j in range(i + 1, n)
+        if (i, j) not in e_set
+    ]
+
+    return {
         "n": n,
-        "T": T,
-        "M": M, 
-        "R": R, 
+        "T": int(max_start_time),
+        "M": M,
+        "R": R,
         "E": E,
         "L": L,
         "p": p,
@@ -101,4 +142,3 @@ def get_or_instance(processes, scarcity, max_start_time,
         "ES": ES,
         "VP": VP,
     }
-    return instance
