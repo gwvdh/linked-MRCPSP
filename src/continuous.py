@@ -23,6 +23,7 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     unique_processing_times = list(set([i for job in p for i in job]))
     unique_processing_times.append(T)
     divisor = gcd(*unique_processing_times)
+    #divisor = 1
     for i in range(len(p)):
         for j in range(len(p[i])):
             p[i][j] = p[i][j] // divisor
@@ -39,7 +40,7 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     model.setParam('TimeLimit', timeout)
 
     # Activity variables
-    S = model.addVars(n, vtype=GRB.CONTINUOUS, name="activity")
+    S = model.addVars(n, vtype=GRB.INTEGER, name="activity")
     model.addConstrs((S[i] >= earliest_starting_times[i] for i in range(n)), name="earliest_starting_times")
     activity_mode_sets = [(i, m) for i in range(n) for m in range(M)]
     x = model.addVars(activity_mode_sets, vtype=GRB.BINARY, name="mode")
@@ -48,12 +49,14 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     pair_sets_2 = [(i, j) for i in range(n) for j in range(n)]
     z = model.addVars(pair_sets_2, vtype=GRB.BINARY, name="start_start_sequence")
     resource_sets = [(i, j, k) for i in range(n) for j in range(n) for k in range(len(R))]
-    u = model.addVars(resource_sets, vtype=GRB.BINARY, name="resource")
+    u = model.addVars(resource_sets, vtype=GRB.INTEGER, lb=0, ub={(i, j, k): max(r[i][m][k] for m in range(M)) for i, j, k in resource_sets}, name="resource")
 
     # Objective
     if obj == "makespan":
         model.setObjective(S[n-1], GRB.MINIMIZE)
     elif obj == "flow-time":
+        model.setObjective(gp.quicksum(S[i] - earliest_starting_times[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) for i in range(n)), GRB.MINIMIZE)
+    elif obj == "process-flow-time":
         model.setObjective(gp.quicksum(S[i] - earliest_starting_times[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) for i in O), GRB.MINIMIZE)
 
     # Constraints

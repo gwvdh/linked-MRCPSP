@@ -45,7 +45,9 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(1,T) for m in range(M) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(n)), GRB.MINIMIZE)
+    elif obj == "process-flow-time":
+        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in O), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once
@@ -116,7 +118,10 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(1,T) for m in range(M) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(n)), GRB.MINIMIZE)
+        #model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(1,T) for m in range(M) for i in range(n))+(z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]), GRB.MINIMIZE)
+    elif obj == "process-flow-time":
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in O), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once

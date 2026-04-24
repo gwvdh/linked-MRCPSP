@@ -46,6 +46,8 @@ def onoff_pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(n)), GRB.MINIMIZE)
+    elif obj == "process-flow-time":
         model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in O), GRB.MINIMIZE)
 
     # Constraints
@@ -118,6 +120,8 @@ def onoff_pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, sile
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(n)), GRB.MINIMIZE)
+    elif obj == "process-flow-time":
         model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in O), GRB.MINIMIZE)
 
     # Constraints

@@ -45,6 +45,8 @@ def onoff_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * y[n-1, m, t] for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
+        model.setObjective(gp.quicksum(gp.quicksum(y[i, m, t] * (t-earliest_starting_times[i] + (p[i][m]/2 + 0.5 if p[i][m] > 0 else 0)) for t in range(T))/max(p[i][m], 1) for i in range(n) for m in range(M)), GRB.MINIMIZE)
+    elif obj == "process-flow-time":
         # Rounding the addition down for odd length, rounding down the timeslot for even length
         model.setObjective(gp.quicksum(gp.quicksum(y[i, m, t] * (t-earliest_starting_times[i] + (p[i][m]/2 + 0.5 if p[i][m] > 0 else 0)) for t in range(T))/max(p[i][m], 1) for i in O for m in range(M)), GRB.MINIMIZE)
 
