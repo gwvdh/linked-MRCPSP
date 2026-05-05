@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from .generator import get_min_max_demands, get_capacity
+from .generator import get_capacity
 from .definitions import Process, NetworkType
 from .xml_parser import RA_PST
 
@@ -24,10 +24,7 @@ def get_or_instance(
     M = ra_pst.get_number_of_modes()
 
     capacities: List[List[int]] = [
-        [
-            get_capacity(mn, mx, scarcity)
-            for mn, mx in min_max[i]
-        ]
+        [get_capacity(mn, mx, scarcity) for mn, mx in min_max[i]]
         for i in range(max_phases)
     ]
     print(f"Capacities: {capacities}")
@@ -57,7 +54,6 @@ def get_or_instance(
     for process in processes:
         n_active = len(process.network_type.value)
         # first_job[phase] / last_job[phase] within this process
-        phase_first: List[Optional[int]] = [None] * n_active
         phase_last: List[Optional[int]] = [None] * n_active
 
         for i in range(n_active):
@@ -79,7 +75,6 @@ def get_or_instance(
                                 E.append(
                                     [phase_last[pred_phase], job_idx]
                                 )
-                    phase_first[i] = job_idx
                 else:
                     # Sequential within phase
                     E.append([job_idx - 1, job_idx])

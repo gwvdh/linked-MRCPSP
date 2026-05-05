@@ -147,7 +147,7 @@ def test_model(
     instance = get_or_instance(
         processes=processes,
         scarcity=scarcity,
-        max_start_time=int(max_start_time),
+        max_start_time=max_start_time,
         ra_pst=ra_pst,
         min_max=min_max,
         max_phases=max_phases,

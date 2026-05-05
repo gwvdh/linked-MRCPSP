@@ -89,20 +89,9 @@ class Process:
         )
 
     def get_max_resource_demand_mode(self, resource: int) -> list[int | None]:
-        return self._select_mode_by_demand(resource, maximize=True)
-
-    def _select_mode_by_demand(
-        self, resource: int, *, maximize: bool
-    ) -> list[int | None]:
-        """
-        Select the mode that maximizes (maximize=True) or minimizes (maximize=False) the resource demand.
-        Used for the minimum and maximum resource demand extraction.
-        :param resource: The resource index
-        :param maximize: Whether to maximize or minimize the resource demand
-        """
         n_phases = len(self.phases)
         best_mode: list[int | None] = [None] * n_phases
-        best_demand = [float("-inf" if maximize else "inf")] * n_phases
+        best_demand = [float("-inf")] * n_phases
 
         for phase_id, phase_tasks in enumerate(self.tasks):
             for mode in range(self.phases[phase_id].number_of_modes):
@@ -111,7 +100,7 @@ class Process:
                     for task in phase_tasks
                     if task is not None and task.resource[mode] == resource
                 )
-                if maximize == (demand > best_demand[phase_id]):
+                if demand > best_demand[phase_id]:
                     best_demand[phase_id] = demand
                     best_mode[phase_id] = mode
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-import sys
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
@@ -263,7 +262,7 @@ def compute_min_demands(processes: List[Process], max_phases: int) -> List[Dict[
                 if task is None: continue
                 n_modes = len(task.resource)
                 for res in {r for r in task.resource if r is not None}:
-                    min_req = min(1 if task.resource[m] == res else 0 for m in range(n_modes))
+                    min_req = int(all(task.resource[m] == res for m in range(n_modes)))
                     min_demands[phase_id][res] = max(min_demands[phase_id][res], min_req)
     return [dict(d) for d in min_demands]
 
@@ -278,18 +277,11 @@ def get_extremal_demands(timelines: List[List[PhaseTimeline]]) -> List[Dict[int,
 
     result: List[Dict[int, int]] = [defaultdict(int) for _ in range(n_phases)]
 
-    for _resource_id, phase_timelines in enumerate(timelines):
-        peaks: List[Dict[int, int]] = [defaultdict(int) for _ in range(n_phases)]
-
+    for phase_timelines in timelines:
         for phase_id, phase_timeline in enumerate(phase_timelines):
-            for _time, res_counts in phase_timeline.items():
+            for res_counts in phase_timeline.values():
                 for res, count in res_counts.items():
-                    if count > peaks[phase_id][res]:
-                        peaks[phase_id][res] = count
-
-        for i in range(n_phases):
-            for res, peak in peaks[i].items():
-                result[i][res] = max(result[i][res], peak)
+                    result[phase_id][res] = max(result[phase_id][res], count)
 
     return [dict(d) for d in result]
 
