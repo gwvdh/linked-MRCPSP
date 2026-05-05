@@ -30,6 +30,7 @@ def get_or_instance(
         ]
         for i in range(max_phases)
     ]
+    print(f"Capacities: {capacities}")
     R: List[int] = [
         capacities[i][j]
         for i in range(max_phases)

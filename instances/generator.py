@@ -167,23 +167,11 @@ def _schedule_phase(
 # ---------------------------------------------------------------------------
 
 
-def simulate_extremal(
-    processes: List[Process],
-    max_phases: int,
-    get_min: bool = True,
-) -> List[List[PhaseTimeline]]:
+def simulate_extremal(processes: List[Process], max_phases: int) -> List[List[PhaseTimeline]]:
     """
-    For each resource index, build per-phase timelines using the mode that
-    minimises (get_min=True) or maximises (get_min=False) demand on that
-    resource.
-
-    Iterates over plain resource indices (int) so comparisons against
-    ``task.resource[mode]`` (also int) are always valid.
-
-    Returns ``timelines[resource_index][phase_index][time][resource_index]``.
+    For each resource index, build per-phase timelines using the mode that 
+    maximises demand on that resource. 
     """
-    # Derive the set of resource indices from the first process's tasks.
-    # All processes share the same RA-PST so the resource set is identical.
     all_resource_indices: List[int] = sorted(
         {
             res
@@ -202,11 +190,7 @@ def simulate_extremal(
 
         for process in processes:
             # get_min/max_resource_demand_mode now receives a plain int
-            modes: List[Optional[int]] = (
-                process.get_min_resource_demand_mode(resource)
-                if get_min
-                else process.get_max_resource_demand_mode(resource)
-            )
+            modes = process.get_max_resource_demand_mode(resource)
             n_active = _active_phases(process.network_type)
             phase_end: List[int] = []
 
@@ -261,21 +245,38 @@ def simulate_processes(
 # ---------------------------------------------------------------------------
 
 
-def get_extremal_demands(
-    timelines: List[List[PhaseTimeline]],
-    get_min: bool = True,
-) -> List[Dict[int, int]]:
+def compute_min_demands(processes: List[Process], max_phases: int) -> List[Dict[int, int]]:
+    """
+    Kolisch et al. minimum demands:
+    K_r^min = max_{j} { min_{m} { k_{jmr} } }
+
+    :param processes: The processes containing the tasks
+    :param max_phases: The maximum number of phases
+    :return: A list of dictionaries of minimum demands for each phase
+    """
+    min_demands: List[Dict[int, int]] = [defaultdict(int) for _ in range(max_phases)]
+
+    for process in processes:
+        for phase_id, phase_tasks in enumerate(process.tasks):
+            if phase_id >= max_phases: break
+            for task in phase_tasks:
+                if task is None: continue
+                n_modes = len(task.resource)
+                for res in {r for r in task.resource if r is not None}:
+                    min_req = min(1 if task.resource[m] == res else 0 for m in range(n_modes))
+                    min_demands[phase_id][res] = max(min_demands[phase_id][res], min_req)
+    return [dict(d) for d in min_demands]
+
+
+
+def get_extremal_demands(timelines: List[List[PhaseTimeline]]) -> List[Dict[int, int]]:
     """
     From a timeline of phases, return some extremal demand for each phase.
     :param timelines: List of phase timelines where jobs are scheduled at their earliest start time. 
-    :param get_min: Get the minimum or maximum peak demand
     """
     n_phases = len(timelines[0])
-    sentinel = sys.maxsize if get_min else 0
 
-    extremal: List[Dict[int, int]] = [
-        defaultdict(lambda: sentinel) for _ in range(n_phases)
-    ]
+    result: List[Dict[int, int]] = [defaultdict(int) for _ in range(n_phases)]
 
     for _resource_id, phase_timelines in enumerate(timelines):
         peaks: List[Dict[int, int]] = [defaultdict(int) for _ in range(n_phases)]
@@ -288,12 +289,9 @@ def get_extremal_demands(
 
         for i in range(n_phases):
             for res, peak in peaks[i].items():
-                if get_min:
-                    extremal[i][res] = min(extremal[i][res], peak)
-                else:
-                    extremal[i][res] = max(extremal[i][res], peak)
+                result[i][res] = max(result[i][res], peak)
 
-    return [dict(phase) for phase in extremal]
+    return [dict(d) for d in result]
 
 
 # ---------------------------------------------------------------------------
@@ -310,20 +308,13 @@ def get_min_max_demands(
     Return ``demands[phase][resource_index] = (min, max)`` for every
     (phase, resource) pair.
     """
-    timelines_min = simulate_extremal(processes, max_phases=max_phases, get_min=True)
-    timelines_max = simulate_extremal(processes, max_phases=max_phases, get_min=False)
+    timelines_max = simulate_extremal(processes, max_phases=max_phases)
+    for idx, tl in enumerate(timelines_max, start=1):
+        plot_timelines(tl, filename=f"timeline_max_{idx}.png")
 
-    for idx, (tl_min, tl_max) in enumerate(
-        zip(timelines_min, timelines_max), start=1
-    ):
-        plot_timelines(tl_min, filename=f"timeline_min_{idx}.png")
-        plot_timelines(tl_max, filename=f"timeline_max_{idx}.png")
-
-    min_demands = get_extremal_demands(timelines_min, get_min=True)
+    min_demands = compute_min_demands(processes, max_phases=max_phases)
     print("Min/max demands:", min_demands)
-    # NOTE: override computed minimums with a known safe floor if desired:
-    # min_demands = [{r: 0 for r in range(n_resources)} for _ in range(max_phases)]
-    max_demands = get_extremal_demands(timelines_max, get_min=False)
+    max_demands = get_extremal_demands(timelines_max)
     print("Min/max demands:", max_demands)
 
     all_resources = sorted(

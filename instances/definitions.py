@@ -88,9 +88,6 @@ class Process:
             if task is not None
         )
 
-    def get_min_resource_demand_mode(self, resource: int) -> list[int | None]:
-        return self._select_mode_by_demand(resource, maximize=False)
-
     def get_max_resource_demand_mode(self, resource: int) -> list[int | None]:
         return self._select_mode_by_demand(resource, maximize=True)
 
