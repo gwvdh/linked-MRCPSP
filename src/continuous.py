@@ -48,8 +48,9 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     y = model.addVars(pair_sets, vtype=GRB.BINARY, name="completion_start_sequence")
     pair_sets_2 = [(i, j) for i in range(n) for j in range(n)]
     z = model.addVars(pair_sets_2, vtype=GRB.BINARY, name="start_start_sequence")
-    resource_sets = [(i, j, k) for i in range(n) for j in range(n) for k in range(len(R))]
-    u = model.addVars(resource_sets, vtype=GRB.INTEGER, lb=0, ub={(i, j, k): max(r[i][m][k] for m in range(M)) for i, j, k in resource_sets}, name="resource")
+    #resource_sets = [(i, j, k) for i in range(n) for j in range(n) for k in range(len(R))]
+    resource_sets = [(j, i, k) for j, i in VP for k in range(len(R))]
+    u = model.addVars(resource_sets, vtype=GRB.INTEGER, lb=0, ub={(j, i, k): max(r[j][m][k] for m in range(M)) for j, i, k in resource_sets}, name="resource")
 
     # Objective
     if obj == "makespan":
@@ -64,7 +65,7 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     model.addConstrs((S[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) <= S[j] + T*(1-y[i, j]) for i,j in VP), name="connect_start_completion")
 
     # Precedence relations between jobs (i,j)
-    model.addConstrs((S[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) <= S[j] for i,j in E), name="connect_start_completion")
+    model.addConstrs((S[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) <= S[j] for i,j in E), name="precedence")
 
     # Connect the start-start sequencing variables and the timing variables
     model.addConstrs((T * z[i, j] >= S[j] - S[i] + 1 for i,j in VP), name="connect_start_start_timing")

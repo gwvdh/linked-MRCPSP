@@ -121,8 +121,8 @@ def get_or_instance(
     VP = [ # Inverse of precedence pairs. WARNING: it may be very large!
         [i, j]
         for i in range(n)
-        for j in range(i + 1, n)
-        if (i, j) not in e_set
+        for j in range(n)
+        if i!= j and (i, j) not in e_set
     ]
 
     return {
