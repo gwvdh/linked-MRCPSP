@@ -257,47 +257,6 @@ def simulate_processes(
 
 
 # ---------------------------------------------------------------------------
-# Monte-Carlo aggregation
-# ---------------------------------------------------------------------------
-
-
-def monte_carlo_simulation(
-    processes: List[Process],
-    iterations: int,
-    max_phases: int = 3,
-) -> Tuple[List[PhaseTimeline], List[PhaseTimeline]]:
-    """
-    Simulate one run by picking a random mode per phase per process.
-    """
-    avg_timelines: List[Dict] = [
-        defaultdict(lambda: defaultdict(float)) for _ in range(max_phases)
-    ]
-    max_timelines: List[Dict] = [
-        defaultdict(lambda: defaultdict(float)) for _ in range(max_phases)
-    ]
-
-    print(f"Running {iterations} simulations...")
-    for _ in range(iterations):
-        single_run = simulate_processes(processes, max_phases)
-        for phase_id, timeline in enumerate(single_run):
-            for t, res_counts in timeline.items():
-                for res, count in res_counts.items():
-                    avg_timelines[phase_id][t][res] += count
-                    if count > max_timelines[phase_id][t][res]:
-                        max_timelines[phase_id][t][res] = count
-
-    for phase_id in range(max_phases):
-        for t in avg_timelines[phase_id]:
-            for res in avg_timelines[phase_id][t]:
-                avg_timelines[phase_id][t][res] /= iterations
-
-    return (
-        [dict(sorted(tl.items())) for tl in avg_timelines],
-        [dict(sorted(tl.items())) for tl in max_timelines],
-    )
-
-
-# ---------------------------------------------------------------------------
 # Extremal demand of phase timelines
 # ---------------------------------------------------------------------------
 
@@ -307,7 +266,7 @@ def get_extremal_demands(
     get_min: bool = True,
 ) -> List[Dict[int, int]]:
     """
-    From a timeline of phases, return some extram demand for each phase.
+    From a timeline of phases, return some extremal demand for each phase.
     :param timelines: List of phase timelines where jobs are scheduled at their earliest start time. 
     :param get_min: Get the minimum or maximum peak demand
     """
@@ -348,6 +307,8 @@ def get_min_max_demands(
 ) -> List[List[Tuple[int, int]]]:
     """
     Get the minimum and maximum peak demand for each phase.
+    Return ``demands[phase][resource_index] = (min, max)`` for every
+    (phase, resource) pair.
     """
     timelines_min = simulate_extremal(processes, max_phases=max_phases, get_min=True)
     timelines_max = simulate_extremal(processes, max_phases=max_phases, get_min=False)
@@ -359,9 +320,11 @@ def get_min_max_demands(
         plot_timelines(tl_max, filename=f"timeline_max_{idx}.png")
 
     min_demands = get_extremal_demands(timelines_min, get_min=True)
+    print("Min/max demands:", min_demands)
     # NOTE: override computed minimums with a known safe floor if desired:
     # min_demands = [{r: 0 for r in range(n_resources)} for _ in range(max_phases)]
     max_demands = get_extremal_demands(timelines_max, get_min=False)
+    print("Min/max demands:", max_demands)
 
     all_resources = sorted(
         {res for phase in (*min_demands, *max_demands) for res in phase}

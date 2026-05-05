@@ -15,6 +15,7 @@ testset*
 plots/
 *.db
 data/
+instance_space.png
 
 eval_archive*
 ra_pst.xml

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from gurobipy import GRB
 
-from instances.generator import generate_instance, get_min_max_demands, get_capacity
+from instances.generator import generate_instance, get_capacity, get_min_max_demands
 from instances.definitions import Process
 from instances.or_instance import get_or_instance
 from instances.xml_parser import RA_PST
@@ -115,6 +115,7 @@ def test_model(
     solver: str,
     scarcity: float,
     objective: str,
+    min_max: List[List[Tuple[int, int]]],
     max_phases: int = 3,
     timeout: int = 600,
     db: Optional[Database] = None,
@@ -146,8 +147,9 @@ def test_model(
     instance = get_or_instance(
         processes=processes,
         scarcity=scarcity,
-        max_start_time=int(max_start_time/2),
+        max_start_time=int(max_start_time),
         ra_pst=ra_pst,
+        min_max=min_max,
         max_phases=max_phases,
     )
     instance_file = output_instance(
@@ -311,12 +313,12 @@ def main() -> None:
 
     instance_parameters = {
         "number_of_processes": 10,
-        "arrival_rate": 0.75,
+        "arrival_rate": 0.5,
         "batch_size": 2,
         "max_phases": 3,
-        "min_base_duration": 2.0,
+        "min_base_duration": 1.0,
         "max_base_duration": 5.0,
-        "min_resource_ratio": 1.0,
+        "min_resource_ratio": 0.5,
         "resource_ratio_center": 1.5,
         "resource_ratio_spread": 1.0,
         "timeout": 600,
@@ -333,17 +335,20 @@ def main() -> None:
         resource_ratio_center=instance_parameters["resource_ratio_center"],
         resource_ratio_spread=instance_parameters["resource_ratio_spread"],
     )
+    min_max = get_min_max_demands(processes=processes, max_phases=instance_parameters["max_phases"])
 
     db_instance_id = db.add_instance(**instance_parameters)
 
     for model in MODELS:
         for scarcity in SCARCITIES:
+            print(f"-"*50)
             test_model(
                 processes=processes,
                 ra_pst=ra_pst,
                 solver=model,
                 scarcity=scarcity,
                 objective="flow-time",
+                min_max=min_max,
                 max_phases=instance_parameters["max_phases"],
                 timeout=instance_parameters["timeout"],
                 db=db,

@@ -12,6 +12,7 @@ def get_or_instance(
     scarcity: float,
     max_start_time: int,
     ra_pst: RA_PST,
+    min_max: List[List[Tuple[int, int]]],
     max_phases: int = 3,
 ) -> Dict[str, Any]:
     """
@@ -22,7 +23,6 @@ def get_or_instance(
     n_resources = ra_pst.get_number_of_resources()
     M = ra_pst.get_number_of_modes()
 
-    min_max = get_min_max_demands(processes=processes, max_phases=max_phases)
     capacities: List[List[int]] = [
         [
             get_capacity(mn, mx, scarcity)
