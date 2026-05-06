@@ -116,6 +116,16 @@ def get_or_instance(
         E.append([last_job, sink])
     n = sink + 1
 
+    # Transitive closure of precedence relations E
+    adj: Dict[int, set] = {i: set() for i in range(n)}
+    for i, j in E:
+        adj[i].add(j)
+    for k in range(n):
+        for i in range(n):
+            if k in adj[i]:
+                adj[i] |= adj[k]
+    E = [[i, j] for i in range(n) for j in adj[i]]
+
     e_set = {(a, b) for a, b in E} | {(b, a) for a, b in E}
     VP = [] 
     VP = [ # Inverse of precedence pairs. WARNING: it may be very large!
