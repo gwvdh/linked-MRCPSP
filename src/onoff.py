@@ -45,28 +45,31 @@ def onoff_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * y[n-1, m, t] for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum(gp.quicksum(y[i, m, t] * (t-earliest_starting_times[i] + (p[i][m]/2 + 0.5 if p[i][m] > 0 else 0)) for t in range(T))/max(p[i][m], 1) for i in range(n) for m in range(M)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(
+            gp.quicksum(gp.quicksum(y[i, m, t] * t for t in range(T))/max(p[i][m], 1) + gp.quicksum(y[i, m, t] for t in range(T))/max(p[i][m], 1) * ((p[i][m]/2.0) + (0.5 if p[i][m] > 0 else 0)) for m in range(M))
+        - earliest_starting_times[i] for i in range(n)), GRB.MINIMIZE)
     elif obj == "process-flow-time":
         # Rounding the addition down for odd length, rounding down the timeslot for even length
-        model.setObjective(gp.quicksum(gp.quicksum(y[i, m, t] * (t-earliest_starting_times[i] + (p[i][m]/2 + 0.5 if p[i][m] > 0 else 0)) for t in range(T))/max(p[i][m], 1) for i in O for m in range(M)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(
+            gp.quicksum(gp.quicksum(y[i, m, t] * t for t in range(T))/max(p[i][m], 1) + gp.quicksum(y[i, m, t] for t in range(T))/max(p[i][m], 1) * ((p[i][m]/2.0) + (0.5 if p[i][m] > 0 else 0)) for m in range(M))
+        - earliest_starting_times[i] for i in O), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once (schedule dummy separately, since p[n-1][m] = 0)
-    model.addConstrs((gp.quicksum(y[i, m, t]/p[i][m] if p[i][m] > 0 else y[i, m, t] for m in range(M) for t in range(T) ) == 1 for i in range(1,n-1)), name="schedule")
-    model.addConstr((gp.quicksum(y[0, m, t] for m in range(M) for t in range(T)) == 1), name="schedule_first")
-    model.addConstr((gp.quicksum(y[n-1, m, t] for m in range(M) for t in range(T)) == 1), name="schedule_last")
+    model.addConstrs((gp.quicksum(y[i, m, t]/max(p[i][m], 1) for m in range(M) for t in range(T) ) == 1 for i in range(n)), name="schedule")
 
     # If job is started, start it for exactly p[i][m] consecutive time slots in mode m
     model.addConstrs((p[i][m] * (y[i, m, t] - y[i, m, t+1]) - gp.quicksum(y[i, m, tau] for tau in range(max(t - p[i][m]+1, 0), t)) <= 1 for i in range(n) for m in range(M) for t in range(T-1)), name="started_same_mode")
 
     # Precedence relations between jobs (i,j)
     model.addConstrs((gp.quicksum(y[i, m, tau]/max(p[i][m], 1) for m in range(M) for tau in range(t + 1 - min(p[i][m], 1))) >= gp.quicksum(y[j, m, t] for m in range(M)) for i,j in E for t in range(T)), name="precedence")
+    #model.addConstrs((gp.quicksum(y[i, m, tau]/max(p[i][m], 1) for m in range(M) for tau in range(t) if p[i][m] > 0) >= gp.quicksum(y[j, m, t] for m in range(M)) for i,j in E for t in range(T)), name="precedence")
 
     # Resource availability
-    model.addConstrs((gp.quicksum(r[i][m][k] * y[i, m, t] for i in range(n) for m in range(M)) <= R[k] for t in range(T) for k in range(len(R))), name="resource")
+    model.addConstrs((gp.quicksum(r[i][m][k] * y[i, m, t] for i in range(n) for m in range(M) if p[i][m] > 0) <= R[k] for t in range(T) for k in range(len(R))), name="resource")
 
     # Linked modes of jobs (i,j)
-    model.addConstrs((gp.quicksum(y[i, m, t]/max(p[i][m],1) for t in range(T)) == gp.quicksum(y[j, m, t]/max(p[j][m],1) for t in range(T)) for i,j in L for m in range(M)), name="linked")
+    model.addConstrs((gp.quicksum(y[i, m, t] for t in range(T))/max(p[i][m],1) == gp.quicksum(y[j, m, t] for t in range(T))/max(p[j][m],1) for i,j in L for m in range(M)), name="linked")
     
     # Zero time slots 
     model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots")

@@ -44,9 +44,9 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     model.addConstrs((S[i] >= earliest_starting_times[i] for i in range(n)), name="earliest_starting_times")
     activity_mode_sets = [(i, m) for i in range(n) for m in range(M)]
     x = model.addVars(activity_mode_sets, vtype=GRB.BINARY, name="mode")
-    pair_sets = [(i, j) for i in range(n) for j in range(n)]
+    pair_sets = [(i, j) for i, j in VP]
     y = model.addVars(pair_sets, vtype=GRB.BINARY, name="completion_start_sequence")
-    pair_sets_2 = [(i, j) for i in range(n) for j in range(n)]
+    pair_sets_2 = [(i, j) for i, j in VP]
     z = model.addVars(pair_sets_2, vtype=GRB.BINARY, name="start_start_sequence")
     #resource_sets = [(i, j, k) for i in range(n) for j in range(n) for k in range(len(R))]
     resource_sets = [(j, i, k) for j, i in VP for k in range(len(R))]
@@ -74,7 +74,8 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     model.addConstrs((gp.quicksum(x[i, m] for m in range(M)) == 1 for i in range(n)), name="execute_activity")
 
     # Resource availability
-    model.addConstrs((gp.quicksum(r[j][m][k] * x[j, m] for m in range(M)) - max(r[j][m][k] for m in range(M))*(1 - z[j, i] + y[j, i]) <= u[j,i,k] for j, i in VP for k in range(len(R))), name="resource")
+    BIG_M = T 
+    model.addConstrs((gp.quicksum(r[j][m][k] * x[j, m] for m in range(M)) - BIG_M*(1 - z[j, i] + y[j, i]) - BIG_M*gp.quicksum(x[i, m] for m in range(M) if p[i][m] == 0) <= u[j,i,k] for j, i in VP for k in range(len(R))), name="resource")
     model.addConstrs((gp.quicksum(r[i][m][k] * x[i, m] for m in range(M)) + gp.quicksum(u[j, i, k] for j, i_prime in VP if i_prime == i) <= R[k] for i in range(n) for k in range(len(R))), name="resource_2")
 
     # Linked modes of jobs (i,j)

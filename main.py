@@ -17,7 +17,7 @@ from src.step import step_model, step_model_disaggregated
 from src.onoff import onoff_model
 from src.onoff_pulse import onoff_pulse_model, onoff_pulse_model_disaggregated
 from src.continuous import continuous_model
-from src.vis_schedule import visualize_pulse_model, visualize_continuous_model
+from src.vis_schedule import visualize_pulse_model, visualize_continuous_model, visualize_onoff_model
 from database import Database
 
 XML_FILE = "rapst/full_rapst_permit.xml"
@@ -188,7 +188,7 @@ def test_model(
         print("\033[91mNo solution found within time limit\033[0m")
     else:
         print("\033[92mFeasible solution found\033[0m")
-        print(f"\033[1mRunning time: {time.time() - t0:.3f}s\tObjective: {model.objVal * divisor:.1f}\033[0m")
+        print(f"\033[1mRunning time: {time.time() - t0:.3f}s\tObjective: {model.objVal * divisor:.0f}\033[0m")
         if solver in ("PDT", "PDDT", "OOPDT", "OOPDDT"):
             visualize_pulse_model(
                 model=model,
@@ -201,6 +201,19 @@ def test_model(
                 processes=processes,
                 divisor=divisor,
                 filename=f"Schedule_{scarcity}",
+            )
+        elif solver in ("OODDT"):
+            visualize_onoff_model(
+                model=model,
+                n=instance["n"],
+                T=instance["T"],
+                M=instance["M"],
+                R=instance["R"],
+                p=instance["p"],
+                r=instance["r"],
+                processes=processes,
+                divisor=divisor,
+                filename=f"Schedule_{scarcity}_onoff",
             )
         elif solver in ("MSEQCT"):
             visualize_continuous_model(
@@ -310,17 +323,18 @@ def main() -> None:
     ra_pst = RA_PST(XML_FILE)
 
     instance_parameters = {
-        "number_of_processes": 10,
+        "number_of_processes": 5,
         "arrival_rate": 0.5,
         "batch_size": 2,
         "max_phases": 3,
-        "min_base_duration": 1.0,
+        "min_base_duration": 2.0,
         "max_base_duration": 5.0,
-        "min_resource_ratio": 0.5,
+        "min_resource_ratio": 0.6,
         "resource_ratio_center": 1.5,
         "resource_ratio_spread": 1.0,
         "timeout": 600,
     }
+    assert instance_parameters["min_base_duration"] * instance_parameters["min_resource_ratio"] >= 1.0
 
     processes = generate_instance(
         number_of_processes=instance_parameters["number_of_processes"],
