@@ -323,7 +323,7 @@ def main() -> None:
     ra_pst = RA_PST(XML_FILE)
 
     instance_parameters = {
-        "number_of_processes": 5,
+        "number_of_processes": 10,
         "arrival_rate": 0.5,
         "batch_size": 2,
         "max_phases": 3,
@@ -350,6 +350,7 @@ def main() -> None:
     min_max = get_min_max_demands(processes=processes, max_phases=instance_parameters["max_phases"])
 
     db_instance_id = db.add_instance(**instance_parameters)
+    print(f"DB instance ID: {db_instance_id}")
 
     for model in MODELS:
         for scarcity in SCARCITIES:

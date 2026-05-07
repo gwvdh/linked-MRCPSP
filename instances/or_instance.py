@@ -124,9 +124,9 @@ def get_or_instance(
         for i in range(n):
             if k in adj[i]:
                 adj[i] |= adj[k]
-    E = [[i, j] for i in range(n) for j in adj[i]]
+    TE = [[i, j] for i in range(n) for j in adj[i]]
 
-    e_set = {(a, b) for a, b in E} | {(b, a) for a, b in E}
+    e_set = {(a, b) for a, b in TE} | {(b, a) for a, b in TE}
     VP = [] 
     VP = [ # Inverse of precedence pairs. WARNING: it may be very large!
         [i, j]
