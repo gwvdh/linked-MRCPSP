@@ -24,6 +24,8 @@ XML_FILE = "rapst/full_rapst_permit.xml"
 
 MODELS = ["PDT", "PDDT", "SDT", "SDDT", "OODDT", "OOPDT", "OOPDDT", "MSEQCT"]
 SCARCITIES = [round(s * 0.1, 1) for s in range(11)]
+MODELS = ["PDDT"]
+SCARCITIES = [0.4]
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +173,9 @@ def test_model(
         obj=objective,
         timeout=timeout,
     )
+
+    model.update()
+    print(f"Model: {model.NumVars} vars, {model.NumConstrs} constraints, {model.NumNZs} non-zeros")
     model.optimize()
 
     solution_file = output_solution(
@@ -368,8 +373,8 @@ def main() -> None:
                 db_instance_id=db_instance_id,
             )
 
-    print(db.get_instances())
-    print(db.get_solutions(instance_id=db_instance_id))
+    #print(db.get_instances())
+    #print(db.get_solutions(instance_id=db_instance_id))
     create_tables(db_instance_id, db)
 
 

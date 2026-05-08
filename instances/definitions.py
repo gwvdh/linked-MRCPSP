@@ -81,12 +81,18 @@ class Process:
         self.tasks = self._define_tasks(variance=0.2)
 
     def max_processing_time(self) -> int:
-        return sum(
-            max(task.duration)
-            for phase_tasks in self.tasks
-            for task in phase_tasks
-            if task is not None
-        )
+        """Return the max processing time of the process in any mode."""
+        duration = 0
+        for i, phase in enumerate(self.phases):
+            phase_duration = 0
+            for mode in range(phase.number_of_modes):
+                phase_duration = max(phase_duration, sum(
+                                    task.duration[mode]
+                                    for task in self.tasks[i]
+                                    if task is not None
+                                    ))
+            duration += phase_duration
+        return duration
 
     def get_max_resource_demand_mode(self, resource: int) -> list[int | None]:
         n_phases = len(self.phases)
