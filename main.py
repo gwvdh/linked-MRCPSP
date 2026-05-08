@@ -24,8 +24,6 @@ XML_FILE = "rapst/full_rapst_permit.xml"
 
 MODELS = ["PDT", "PDDT", "SDT", "SDDT", "OODDT", "OOPDT", "OOPDDT", "MSEQCT"]
 SCARCITIES = [round(s * 0.1, 1) for s in range(11)]
-MODELS = ["PDT", "PDDT", "SDT"]
-SCARCITIES = [0.4]
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +326,7 @@ def main() -> None:
     ra_pst = RA_PST(XML_FILE)
 
     instance_parameters = {
-        "number_of_processes": 10,
+        "number_of_processes": 5,
         "arrival_rate": 0.5,
         "batch_size": 2,
         "max_phases": 3,

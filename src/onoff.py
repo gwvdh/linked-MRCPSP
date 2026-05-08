@@ -73,6 +73,7 @@ def onoff_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     
     # Zero time slots 
     model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(latest_starting_times[i]+p[i][m]+1, T)), name="zero_time_slots")
     
     return model, divisor
 

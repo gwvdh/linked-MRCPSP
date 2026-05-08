@@ -42,6 +42,7 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     # Activity variables
     S = model.addVars(n, vtype=GRB.INTEGER, name="activity")
     model.addConstrs((S[i] >= earliest_starting_times[i] for i in range(n)), name="earliest_starting_times")
+    model.addConstrs((S[i] <= latest_starting_times[i] for i in range(n)), name="latest_starting_times")
     activity_mode_sets = [(i, m) for i in range(n) for m in range(M)]
     x = model.addVars(activity_mode_sets, vtype=GRB.BINARY, name="mode")
     pair_sets = [(i, j) for i, j in VP]

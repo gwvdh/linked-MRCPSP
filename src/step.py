@@ -56,6 +56,7 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     # Constraints
     # Schedule each job exactly once
     model.addConstrs((gp.quicksum(z[i, m, latest_starting_times[i]] for m in range(M)) == 1 for i in range(n)), name="schedule")
+    model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M)) == 1 for i in range(n)), name="schedule")
 
     # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
     model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M) for t in range(1, T)), name="started_same_mode")
@@ -130,6 +131,7 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     # Constraints
     # Schedule each job exactly once
     model.addConstrs((gp.quicksum(z[i, m, latest_starting_times[i]] for m in range(M)) == 1 for i in range(n)), name="schedule")
+    model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M)) == 1 for i in range(n)), name="schedule")
 
     # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
     model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M) for t in range(1, T)), name="started_same_mode")
@@ -149,9 +151,6 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     
     # Earliest start times
     model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="earliest_start_times")
-    
-    # Zero time slots (not needed, since release times and deadlines is a more specific setting)
-    # model.addConstrs((z[i, m, 0] == 0 for i in range(n) for m in range(M)), name="zero_time_slots")
     
     return model, divisor
 

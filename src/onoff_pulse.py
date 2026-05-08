@@ -75,6 +75,9 @@ def onoff_pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="
     
     # Zero time slots 
     model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots")
+    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(latest_starting_times[i]+1, T)), name="zero_time_slots")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots_onoff")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(latest_starting_times[i]+p[i][m]+1, T)), name="zero_time_slots_onoff")
     
     return model, divisor
 
@@ -149,6 +152,9 @@ def onoff_pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, sile
     
     # Zero time slots 
     model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots")
+    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(latest_starting_times[i]+1, T)), name="zero_time_slots")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots_onoff")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(latest_starting_times[i]+p[i][m]+1, T)), name="zero_time_slots_onoff")
     
     return model, divisor
 
