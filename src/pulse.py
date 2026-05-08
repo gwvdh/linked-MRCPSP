@@ -31,6 +31,8 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     # Starting times
     earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
     latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
+    print(f"Earliest start times: {earliest_starting_times}")
+    print(f"Latest start times: {latest_starting_times}")
 
     # Initialize model
     model = gp.Model("pulse")
@@ -39,16 +41,20 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     model.setParam('TimeLimit', timeout)
 
     # Pulse variables
-    pulse_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
+    x_t = {
+        i: range(earliest_starting_times[i], min(latest_starting_times[i] + 1, T))
+        for i in range(n)
+    }
+    pulse_sets = [(i, m, t) for i in range(n) for m in range(M) for t in x_t[i]]
     x = model.addVars(pulse_sets, vtype=GRB.BINARY, name="pulse")
 
     # Objective
     if obj == "makespan":
-        model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in x_t[n-1] for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(n)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for i in range(n) for m in range(M) for t in x_t[i]), GRB.MINIMIZE)
     elif obj == "process_flow_time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for i in O for m in range(M) for t in x_t[i]), GRB.MINIMIZE)
 
     # Constraints
     # Schedule job exactly once
@@ -56,21 +62,30 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
 
     # Precedence relations between jobs (i,j)
     model.addConstrs((
-        gp.quicksum((t + p[i][m]) * x[i, m, t] for m in range(M) for t in range(T)) <= 
-        gp.quicksum(t * x[j, m, t] for m in range(M) for t in range(T))
+        gp.quicksum((t + p[i][m]) * x[i, m, t] for m in range(M) for t in x_t[i]) <= 
+        gp.quicksum(t * x[j, m, t] for m in range(M) for t in x_t[j])
         for i,j in E), 
         name="precedence")
 
     # Resource availability
-    model.addConstrs((gp.quicksum(gp.quicksum(r[i][m][k] * x[i, m, tau] for tau in range(max(t-p[i][m]+1, 0), t+1)) for m in range(M) for i in range(n)) <= R[k] 
-                     for t in range(T) for k in range(len(R))), name="resource")
+    model.addConstrs((
+        gp.quicksum(r[i][m][k] * x[i, m, tau] 
+            for i in range(n) 
+            for m in range(M) 
+            for tau in range(
+                max(t-p[i][m]+1, earliest_starting_times[i]), 
+                min(t, latest_starting_times[i])+1
+            )
+        ) <= R[k] 
+        for t in range(T) for 
+        k in range(len(R))
+    ), name="resource")
 
     # Linked modes of jobs (i,j)
-    model.addConstrs((gp.quicksum(x[i, m, t] for t in range(T)) <= gp.quicksum(x[j, m, t] for t in range(T)) 
+    model.addConstrs((gp.quicksum(x[i, m, t] for t in x_t[i]) <= gp.quicksum(x[j, m, t] for t in x_t[j]) 
                       for i,j in L for m in range(M)), name="linked")
     
     # Zero time slots 
-    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots")
     
     return model, divisor
 
@@ -107,16 +122,20 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=Tru
     model.setParam('TimeLimit', timeout)
 
     # Pulse variables
-    pulse_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
+    x_t = {
+        i: range(earliest_starting_times[i], min(latest_starting_times[i] + 1, T))
+        for i in range(n)
+    }
+    pulse_sets = [(i, m, t) for i in range(n) for m in range(M) for t in x_t[i]]
     x = model.addVars(pulse_sets, vtype=GRB.BINARY, name="pulse")
 
     # Objective
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(n)), GRB.MINIMIZE)
-    elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for i in range(n) for m in range(M) for t in x_t[i]), GRB.MINIMIZE)
+    elif obj == "process_flow_time":
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for i in O for m in range(M) for t in x_t[i]), GRB.MINIMIZE)
 
     # Constraints
     # Schedule job exactly once
@@ -124,21 +143,33 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=Tru
 
     # Precedence relations between jobs (i,j)
     model.addConstrs((
-        gp.quicksum(x[i, m, tau] for m in range(M) for tau in range(t-p[i][m]+1)) >=
-        gp.quicksum(x[j, m, tau] for m in range(M) for tau in range(t+1))
+        gp.quicksum(x[i, m, tau] for m in range(M) for tau in range(
+            earliest_starting_times[i],
+            min(latest_starting_times[i], t-p[i][m])+1
+        )) >=
+        gp.quicksum(x[j, m, tau] for m in range(M) for tau in range(earliest_starting_times[j], min(latest_starting_times[j], t)+1))
         for i,j in E for t in range(T)), 
         name="precedence")
 
     # Resource availability
-    model.addConstrs((gp.quicksum(gp.quicksum(r[i][m][k] * x[i, m, tau] for tau in range(max(t-p[i][m]+1, 0), t+1)) for m in range(M) for i in range(n)) <= R[k] 
-                     for t in range(T) for k in range(len(R))), name="resource")
+    model.addConstrs((
+        gp.quicksum(r[i][m][k] * x[i, m, tau] 
+            for i in range(n) 
+            for m in range(M) 
+            for tau in range(
+                max(t-p[i][m]+1, earliest_starting_times[i]), 
+                min(t+1, latest_starting_times[i]+1)
+            )
+        ) <= R[k] 
+        for t in range(T) for 
+        k in range(len(R))
+    ), name="resource")
 
     # Linked modes of jobs (i,j)
-    model.addConstrs((gp.quicksum(x[i, m, t] for t in range(T)) <= gp.quicksum(x[j, m, t] for t in range(T)) 
+    model.addConstrs((gp.quicksum(x[i, m, t] for t in x_t[i]) <= gp.quicksum(x[j, m, t] for t in x_t[j]) 
                       for i,j in L for m in range(M)), name="linked")
     
     # Zero time slots 
-    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots")
     
     return model, divisor
 
