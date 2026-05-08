@@ -24,6 +24,8 @@ XML_FILE = "rapst/full_rapst_permit.xml"
 
 MODELS = ["PDT", "PDDT", "SDT", "SDDT", "OODDT", "OOPDT", "OOPDDT", "MSEQCT"]
 SCARCITIES = [round(s * 0.1, 1) for s in range(11)]
+MODELS = ["PDT", "PDDT", "SDT"]
+SCARCITIES = [0.4]
 
 
 # ---------------------------------------------------------------------------

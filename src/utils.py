@@ -49,7 +49,7 @@ def get_latest_start_time(n, T, M, R, E, p, L, r, VP):
     succs: dict[int, list[tuple[int, int]]] = defaultdict(list)
     for i, j in E:
         succs[i].append((j, min(p[j][m] for m in range(M))))
-    latest_starting_times = [T] * n
+    latest_starting_times = [T-1] * n
     for i in range(n-1, -1, -1):
         for succ, max_p in succs[i]:
             if latest_starting_times[succ] >= 0:

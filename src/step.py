@@ -38,6 +38,10 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     model.setParam('TimeLimit', timeout)
 
     # Step variables
+    z_t = {
+        i: range(earliest_starting_times[i], min(latest_starting_times[i] + 1, T))
+        for i in range(n)
+    }
     step_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
     z = model.addVars(step_sets, vtype=GRB.BINARY, name="step")
 
@@ -45,13 +49,13 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(n)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for m in range(M) for i in range(n) for t in z_t[i]), GRB.MINIMIZE)
     elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - earliest_starting_times[i]) for m in range(M) for i in O for t in z_t[i]), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once
-    model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M)) == 1 for i in range(n)), name="schedule")
+    model.addConstrs((gp.quicksum(z[i, m, latest_starting_times[i]] for m in range(M)) == 1 for i in range(n)), name="schedule")
 
     # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
     model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M) for t in range(1, T)), name="started_same_mode")
@@ -72,9 +76,6 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     
     # Earliest start times
     model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="earliest_start_times")
-    
-    # Zero time slots (not needed, since release times and deadlines is a more specific setting)
-    # model.addConstrs((z[i, m, 0] == 0 for i in range(n) for m in range(M)), name="zero_time_slots")
     
     return model, divisor
 
@@ -111,6 +112,10 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     model.setParam('TimeLimit', timeout)
 
     # Step variables
+    z_t = {
+        i: range(earliest_starting_times[i], min(latest_starting_times[i] + 1, T))
+        for i in range(n)
+    }
     step_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
     z = model.addVars(step_sets, vtype=GRB.BINARY, name="step")
 
@@ -118,14 +123,13 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(n)), GRB.MINIMIZE)
-        #model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(1,T) for m in range(M) for i in range(n))+(z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for m in range(M) for i in range(n) for t in z_t[i]), GRB.MINIMIZE)
     elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - earliest_starting_times[i]) for m in range(M) for i in O for t in z_t[i]), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once
-    model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M)) == 1 for i in range(n)), name="schedule")
+    model.addConstrs((gp.quicksum(z[i, m, latest_starting_times[i]] for m in range(M)) == 1 for i in range(n)), name="schedule")
 
     # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
     model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M) for t in range(1, T)), name="started_same_mode")
