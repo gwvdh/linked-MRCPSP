@@ -43,7 +43,7 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     S = model.addVars(n, vtype=GRB.INTEGER, name="activity")
     model.addConstrs((S[i] >= earliest_starting_times[i] for i in range(n)), name="earliest_starting_times")
     model.addConstrs((S[i] <= latest_starting_times[i] for i in range(n)), name="latest_starting_times")
-    activity_mode_sets = [(i, m) for i in range(n) for m in range(M)]
+    activity_mode_sets = [(i, m) for i in range(n) for m in range(M[i])]
     x = model.addVars(activity_mode_sets, vtype=GRB.BINARY, name="mode")
     pair_sets = [(i, j) for i, j in VP]
     y = model.addVars(pair_sets, vtype=GRB.BINARY, name="completion_start_sequence")
@@ -51,36 +51,36 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     z = model.addVars(pair_sets_2, vtype=GRB.BINARY, name="start_start_sequence")
     #resource_sets = [(i, j, k) for i in range(n) for j in range(n) for k in range(len(R))]
     resource_sets = [(j, i, k) for j, i in VP for k in range(len(R))]
-    u = model.addVars(resource_sets, vtype=GRB.INTEGER, lb=0, ub={(j, i, k): max(r[j][m][k] for m in range(M)) for j, i, k in resource_sets}, name="resource")
+    u = model.addVars(resource_sets, vtype=GRB.INTEGER, lb=0, ub={(j, i, k): max(r[j][m][k] for m in range(M[j])) for j, i, k in resource_sets}, name="resource")
 
     # Objective
     if obj == "makespan":
         model.setObjective(S[n-1], GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum(S[i] - earliest_starting_times[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) for i in range(n)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(S[i] - earliest_starting_times[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M[i])) for i in range(n)), GRB.MINIMIZE)
     elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum(S[i] - earliest_starting_times[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(S[i] - earliest_starting_times[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M[i])) for i in O), GRB.MINIMIZE)
 
     # Constraints
     # Connect the start-time variables with the completion-start sequencing variables
-    model.addConstrs((S[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) <= S[j] + T*(1-y[i, j]) for i,j in VP), name="connect_start_completion")
+    model.addConstrs((S[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M[i])) <= S[j] + T*(1-y[i, j]) for i,j in VP), name="connect_start_completion")
 
     # Precedence relations between jobs (i,j)
-    model.addConstrs((S[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M)) <= S[j] for i,j in E), name="precedence")
+    model.addConstrs((S[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M[i])) <= S[j] for i,j in E), name="precedence")
 
     # Connect the start-start sequencing variables and the timing variables
     model.addConstrs((T * z[i, j] >= S[j] - S[i] + 1 for i,j in VP), name="connect_start_start_timing")
 
     # Execute each activity in exactly one mode
-    model.addConstrs((gp.quicksum(x[i, m] for m in range(M)) == 1 for i in range(n)), name="execute_activity")
+    model.addConstrs((gp.quicksum(x[i, m] for m in range(M[i])) == 1 for i in range(n)), name="execute_activity")
 
     # Resource availability
     BIG_M = T 
-    model.addConstrs((gp.quicksum(r[j][m][k] * x[j, m] for m in range(M)) - BIG_M*(1 - z[j, i] + y[j, i]) - BIG_M*gp.quicksum(x[i, m] for m in range(M) if p[i][m] == 0) <= u[j,i,k] for j, i in VP for k in range(len(R))), name="resource")
-    model.addConstrs((gp.quicksum(r[i][m][k] * x[i, m] for m in range(M)) + gp.quicksum(u[j, i, k] for j, i_prime in VP if i_prime == i) <= R[k] for i in range(n) for k in range(len(R))), name="resource_2")
+    model.addConstrs((gp.quicksum(r[j][m][k] * x[j, m] for m in range(M[j])) - BIG_M*(1 - z[j, i] + y[j, i]) - BIG_M*gp.quicksum(x[i, m] for m in range(M[i]) if p[i][m] == 0) <= u[j,i,k] for j, i in VP for k in range(len(R))), name="resource")
+    model.addConstrs((gp.quicksum(r[i][m][k] * x[i, m] for m in range(M[i])) + gp.quicksum(u[j, i, k] for j, i_prime in VP if i_prime == i) <= R[k] for i in range(n) for k in range(len(R))), name="resource_2")
 
     # Linked modes of jobs (i,j)
-    model.addConstrs((x[i, m] == x[j, m] for i,j in L for m in range(M)), name="linked")
+    model.addConstrs((x[i, m] == x[j, m] for i,j in L for m in range(M[i])), name="linked")
     
     # Zero time slots (not needed, since release times and deadlines is a more specific setting)
     

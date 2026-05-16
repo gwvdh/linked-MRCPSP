@@ -269,11 +269,12 @@ def print_tree(nodes: list[TreeNode], prefix: str = "") -> None:
 
 
 class RA_PST:
-    def __init__(self, xml_file: str):
+    def __init__(self, xml_file: str, global_resource_ids: Optional[list[str]] = None):
         self.xml_file = xml_file
         self.calls = parse_calls(xml_file)
         self.roots = equalize(build_tree(self.calls))
         self.paths = get_paths(self.roots)
+        self._global_resource_ids: Optional[list[str]] = global_resource_ids
 
     def get_number_of_tasks(self) -> int:
         return len(self.paths[0])
@@ -282,13 +283,14 @@ class RA_PST:
         return len(self.paths)
 
     def get_resource(self, task: int, mode: int) -> Optional[int]:
-        ids = self.resource_ids
+        #ids = self.resource_ids
+        ids = self._global_resource_ids if self._global_resource_ids is not None else self.resource_ids
         rid = self.paths[mode][task].resource_id
         return ids.index(rid) if rid in ids else None
 
     @cached_property
     def resource_ids(self) -> list[str]:
-        """Sorted list of all real (non-dummy) resource IDs across all paths."""
+        """Sorted list of all real (non-dummy) resource IDs local to this ra-pst."""
         ids = {
             leaf.resource_id
             for path in self.paths
@@ -298,10 +300,13 @@ class RA_PST:
         return sorted(ids)
 
     def get_resource_ids(self) -> list[str]:
-        return self.resource_ids
+        return self._global_resource_ids if self._global_resource_ids is not None else self.resource_ids
+        #return self.resource_ids
 
     def get_number_of_resources(self) -> int:
-        return len(self.resource_ids)
+        ids = self._global_resource_ids if self._global_resource_ids is not None else self.resource_ids
+        return len(ids)
+        #return len(self.resource_ids)
 
 
 def main():

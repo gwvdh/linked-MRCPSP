@@ -12,7 +12,7 @@ def get_or_instance(
     processes: List[Process],
     scarcity: float,
     max_start_time: int,
-    ra_pst: RA_PST,
+    n_resources: int,
     min_max: List[List[Tuple[int, int]]],
     max_phases: int = 3,
 ) -> Dict[str, Any]:
@@ -21,8 +21,9 @@ def get_or_instance(
 
     Returns a dict with keys: n, T, M, R, E, L, p, r, O, ES, VP.
     """
-    n_resources = ra_pst.get_number_of_resources()
-    M = ra_pst.get_number_of_modes()
+    phase_modes: List[int] = [
+        processes[0].phases[i].number_of_modes for i in range(max_phases)
+    ]
 
     capacities: List[List[int]] = [
         [get_capacity(mn, mx, scarcity) for mn, mx in min_max[i]]
@@ -36,15 +37,16 @@ def get_or_instance(
     ]
     total_resources = max_phases * n_resources
 
-    def _zero_p() -> List[int]:
-        return [0] * M
+    def _zero_p(n_modes: int) -> List[int]:
+        return [0] * n_modes
 
-    def _zero_r() -> List[List[int]]:
-        return [[0] * total_resources for _ in range(M)]
+    def _zero_r(n_modes: int) -> List[List[int]]:
+        return [[0] * total_resources for _ in range(n_modes)]
 
     job_idx = 1          # next job index to assign
-    p: List[List[int]] = [_zero_p()]
-    r: List[List[List[int]]] = [_zero_r()]
+    p: List[List[int]] = [_zero_p(1)]
+    r: List[List[List[int]]] = [_zero_r(1)]
+    M: List[int] = [1]
     ES: List[int] = [0]
     E: List[List[int]] = []   # precedence pairs [i, j]  (i before j)
     L: List[List[int]] = []   # linked-mode pairs
@@ -60,6 +62,7 @@ def get_or_instance(
         for i in range(n_active):
             phase_tasks = process.tasks[i]
             n_tasks_in_phase = len(phase_tasks)
+            M_i = phase_modes[i]
 
             for j, task in enumerate(phase_tasks):
                 # ---- precedence edges --------------------------------- #
@@ -85,9 +88,10 @@ def get_or_instance(
                     L.append([job_idx - 1, job_idx])
 
                 # ---- processing times & resource requirements --------- #
-                p.append(_zero_p())
-                r.append(_zero_r())
-                for m in range(M):
+                p.append(_zero_p(M_i))
+                r.append(_zero_r(M_i))
+                M.append(M_i)
+                for m in range(M_i):
                     p[job_idx][m] = task.duration[m]
                     res_idx: Optional[int] = task.resource[m]
                     if res_idx is not None:
@@ -110,8 +114,9 @@ def get_or_instance(
 
     # Sink dummy job
     sink = job_idx
-    p.append(_zero_p())
-    r.append(_zero_r())
+    p.append(_zero_p(1))
+    r.append(_zero_r(1))
+    M.append(1)
     ES.append(0)
     for last_job in O:
         E.append([last_job, sink])

@@ -9,7 +9,7 @@ def visualize_pulse_model(
     model,
     n: int,
     T: int,
-    M: int,
+    M: List[int],
     R: list[int],
     p: list[list[int]],
     r: list[list[list[int]]],
@@ -24,7 +24,7 @@ def visualize_pulse_model(
     model:          Solved Gurobi model returned by pulse_model
     n:              Number of activities
     T:              Number of time slots (pre-normalization)
-    M:              Number of modes
+    M:              Number of modes per activity
     R:              List of resource capacities R[k]
     p:              Processing times p[i][m] (pre-normalization)
     r:              Resource requirements r[i][m][k]
@@ -45,7 +45,7 @@ def visualize_pulse_model(
     vars_map = {v.VarName: v.X for v in model.getVars()}
 
     for i in range(n):
-        for m in range(M):
+        for m in range(M[i]):
             for t in range(T_norm):
                 if vars_map.get(f"pulse[{i},{m},{t}]", 0) > 0.5:
                     duration = p[i][m] // divisor
@@ -192,7 +192,7 @@ def visualize_continuous_model(
     model,
     n: int,
     T: int,
-    M: int,
+    M: list[int],
     R: list[int],
     p: list[list[int]],
     r: list[list[list[int]]],
@@ -207,7 +207,7 @@ def visualize_continuous_model(
     model:          Solved Gurobi model returned by continuous_model
     n:              Number of activities
     T:              Number of time slots (pre-normalization)
-    M:              Number of modes
+    M:              Number of modes per activity
     R:              List of resource capacities R[k]
     p:              Processing times p[i][m] (pre-normalization)
     r:              Resource requirements r[i][m][k]
@@ -233,7 +233,7 @@ def visualize_continuous_model(
         if t_start is None:
             continue
         t_start = int(round(t_start))
-        for m in range(M):
+        for m in range(M[i]):
             if vars_map.get(f"mode[{i},{m}]", 0) > 0.5:
                 duration = p[i][m] // divisor
                 t_end = min(t_start + duration, T_norm)
@@ -378,7 +378,7 @@ def visualize_onoff_model(
     model,
     n: int,
     T: int,
-    M: int,
+    M: list[int],
     R: list[int],
     p: list[list[int]],
     r: list[list[list[int]]],
@@ -393,7 +393,7 @@ def visualize_onoff_model(
     model:          Solved Gurobi model returned by onoff_model
     n:              Number of activities
     T:              Number of time slots (pre-normalization)
-    M:              Number of modes
+    M:              Number of modes per activity
     R:              List of resource capacities R[k]
     p:              Processing times p[i][m] (pre-normalization)
     r:              Resource requirements r[i][m][k]
@@ -416,7 +416,7 @@ def visualize_onoff_model(
     vars_map = {v.VarName: v.X for v in model.getVars()}
 
     for i in range(n):
-        for m in range(M):
+        for m in range(M[i]):
             active_slots = [
                 t
                 for t in range(T_norm)

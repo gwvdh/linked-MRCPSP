@@ -8,7 +8,7 @@ def get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES=None):
     E forms a DAG. 
     :param n: number of activities
     :param T: number of time slots 1,...,T
-    :param M: number of modes
+    :param M: number of modes for each activity
     :param R: List of resource capacities R[k]
     :param E: List of pairs of activity indices (i,j) indicating precedence relations
     :param p: List of processing times for each activity i in each mode m p[i][m]
@@ -20,7 +20,7 @@ def get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES=None):
     """
     preds: dict[int, list[tuple[int, int]]] = defaultdict(list)
     for i, j in E:
-        preds[j].append((i, min(p[i][m] for m in range(M))))
+        preds[j].append((i, min(p[i][m] for m in range(M[i]))))
     earliest_starting_times = [0] * n
     if ES is not None:
         for i in range(n):
@@ -37,7 +37,7 @@ def get_latest_start_time(n, T, M, R, E, p, L, r, VP):
     E forms a DAG. 
     :param n: number of activities
     :param T: number of time slots 1,...,T
-    :param M: number of modes
+    :param M: number of modes for each activity
     :param R: List of resource capacities R[k]
     :param E: List of pairs of activity indices (i,j) indicating precedence relations
     :param p: List of processing times for each activity i in each mode m p[i][m]
@@ -48,7 +48,7 @@ def get_latest_start_time(n, T, M, R, E, p, L, r, VP):
     """
     succs: dict[int, list[tuple[int, int]]] = defaultdict(list)
     for i, j in E:
-        succs[i].append((j, min(p[j][m] for m in range(M))))
+        succs[i].append((j, min(p[j][m] for m in range(M[j]))))
     latest_starting_times = [T-1] * n
     for i in range(n-1, -1, -1):
         for succ, max_p in succs[i]:

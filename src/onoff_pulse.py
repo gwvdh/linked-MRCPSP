@@ -9,7 +9,7 @@ def onoff_pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="
     """
     n: number of activities
     T: number of time slots 1,...,T
-    M: number of modes
+    M: number of modes per activity
     R: List of resource capacities R[k]
     E: List of pairs of activity indices (i,j) indicating precedence relations
     p: List of processing times for each activity i in each mode m p[i][m]
@@ -38,46 +38,46 @@ def onoff_pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="
     model.setParam('TimeLimit', timeout)
 
     # Pulse variables
-    pulse_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
+    pulse_sets = [(i, m, t) for i in range(n) for m in range(M[i]) for t in range(T)]
     x = model.addVars(pulse_sets, vtype=GRB.BINARY, name="pulse")
     y = model.addVars(pulse_sets, vtype=GRB.BINARY, name="onoff")
 
     # Objective
     if obj == "makespan":
-        model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M[n-1])), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(n)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for i in range(n) for m in range(M[i])), GRB.MINIMIZE)
     elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for i in O for m in range(M[i])), GRB.MINIMIZE)
 
     # Constraints
     # Schedule job exactly once
     model.addConstrs((x.sum(i, "*", "*") == 1 for i in range(n)), name="schedule")
 
     # Connect pulse variables with onoff variables
-    model.addConstrs((y[i, m, t] == gp.quicksum(x[i, m, tau] for tau in range(max(t - p[i][m] + 1, 0), t+1)) for i in range(n) for t in range(T) for m in range(M)), name="connect_pulse_onoff")
-    model.addConstrs((gp.quicksum(y[i, m, t] for t in range(T)) == gp.quicksum(p[i][m] * x[i, m, t] for t in range(T)) for i in range(n) for m in range(M)), name="connect_pulse_onoff_processing_time")
+    model.addConstrs((y[i, m, t] == gp.quicksum(x[i, m, tau] for tau in range(max(t - p[i][m] + 1, 0), t+1)) for i in range(n) for t in range(T) for m in range(M[i])), name="connect_pulse_onoff")
+    model.addConstrs((gp.quicksum(y[i, m, t] for t in range(T)) == gp.quicksum(p[i][m] * x[i, m, t] for t in range(T)) for i in range(n) for m in range(M[i])), name="connect_pulse_onoff_processing_time")
 
     # Precedence relations between jobs (i,j)
     model.addConstrs((
-        gp.quicksum((t + p[i][m]) * x[i, m, t] for m in range(M) for t in range(T)) <= 
-        gp.quicksum(t * x[j, m, t] for m in range(M) for t in range(T))
+        gp.quicksum((t + p[i][m]) * x[i, m, t] for m in range(M[i]) for t in range(T)) <= 
+        gp.quicksum(t * x[j, m, t] for m in range(M[j]) for t in range(T))
         for i,j in E), 
         name="precedence")
 
     # Resource availability
-    model.addConstrs((gp.quicksum(gp.quicksum(r[i][m][k] * x[i, m, tau] for tau in range(max(t-p[i][m]+1, 0), t+1)) for m in range(M) for i in range(n)) <= R[k] 
+    model.addConstrs((gp.quicksum(gp.quicksum(r[i][m][k] * x[i, m, tau] for tau in range(max(t-p[i][m]+1, 0), t+1)) for i in range(n) for m in range(M[i])) <= R[k] 
                      for t in range(T) for k in range(len(R))), name="resource")
 
     # Linked modes of jobs (i,j)
     model.addConstrs((gp.quicksum(x[i, m, t] for t in range(T)) <= gp.quicksum(x[j, m, t] for t in range(T)) 
-                      for i,j in L for m in range(M)), name="linked")
+                      for i,j in L for m in range(M[i])), name="linked")
     
     # Zero time slots 
-    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots")
-    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(latest_starting_times[i]+1, T)), name="zero_time_slots")
-    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots_onoff")
-    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(latest_starting_times[i]+p[i][m]+1, T)), name="zero_time_slots_onoff")
+    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(earliest_starting_times[i])), name="zero_time_slots")
+    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(latest_starting_times[i]+1, T)), name="zero_time_slots")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(earliest_starting_times[i])), name="zero_time_slots_onoff")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(latest_starting_times[i]+p[i][m]+1, T)), name="zero_time_slots_onoff")
     
     return model, divisor
 
@@ -85,7 +85,7 @@ def onoff_pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, sile
     """
     n: number of activities
     T: number of time slots 1,...,T
-    M: number of modes
+    M: number of modes per activity
     R: List of resource capacities R[k]
     E: List of pairs of activity indices (i,j) indicating precedence relations
     p: List of processing times for each activity i in each mode m p[i][m]
@@ -114,47 +114,47 @@ def onoff_pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, sile
     model.setParam('TimeLimit', timeout)
 
     # Pulse variables
-    pulse_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
+    pulse_sets = [(i, m, t) for i in range(n) for m in range(M[i]) for t in range(T)]
     x = model.addVars(pulse_sets, vtype=GRB.BINARY, name="pulse")
     y = model.addVars(pulse_sets, vtype=GRB.BINARY, name="onoff")
 
     # Objective
     # Objective
     if obj == "makespan":
-        model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M[n-1])), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in range(n)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for i in range(n) for m in range(M[i])), GRB.MINIMIZE)
     elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for m in range(M) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for t in range(T) for i in O for m in range(M[i])), GRB.MINIMIZE)
 
     # Constraints
     # Schedule job exactly once
     model.addConstrs((x.sum(i, "*", "*") == 1 for i in range(n)), name="schedule")
 
     # Connect pulse variables with onoff variables
-    model.addConstrs((y[i, m, t] == gp.quicksum(x[i, m, tau] for tau in range(max(t - p[i][m] + 1, 0), t+1)) for i in range(n) for t in range(T) for m in range(M)), name="connect_pulse_onoff")
-    model.addConstrs((gp.quicksum(y[i, m, t] for t in range(T)) == gp.quicksum(p[i][m] * x[i, m, t] for t in range(T)) for i in range(n) for m in range(M)), name="connect_pulse_onoff_processing_time")
+    model.addConstrs((y[i, m, t] == gp.quicksum(x[i, m, tau] for tau in range(max(t - p[i][m] + 1, 0), t+1)) for i in range(n) for t in range(T) for m in range(M[i])), name="connect_pulse_onoff")
+    model.addConstrs((gp.quicksum(y[i, m, t] for t in range(T)) == gp.quicksum(p[i][m] * x[i, m, t] for t in range(T)) for i in range(n) for m in range(M[i])), name="connect_pulse_onoff_processing_time")
 
     # Precedence relations between jobs (i,j)
     model.addConstrs((
-        gp.quicksum(x[i, m, tau] for m in range(M) for tau in range(t-p[i][m]+1)) >=
-        gp.quicksum(x[j, m, tau] for m in range(M) for tau in range(t+1))
+        gp.quicksum(x[i, m, tau] for m in range(M[i]) for tau in range(t-p[i][m]+1)) >=
+        gp.quicksum(x[j, m, tau] for m in range(M[j]) for tau in range(t+1))
         for i,j in E for t in range(T)), 
         name="precedence")
 
     # Resource availability
-    model.addConstrs((gp.quicksum(gp.quicksum(r[i][m][k] * x[i, m, tau] for tau in range(max(t-p[i][m]+1, 0), t+1)) for m in range(M) for i in range(n)) <= R[k] 
+    model.addConstrs((gp.quicksum(gp.quicksum(r[i][m][k] * x[i, m, tau] for tau in range(max(t-p[i][m]+1, 0), t+1)) for i in range(n) for m in range(M[i])) <= R[k] 
                      for t in range(T) for k in range(len(R))), name="resource")
 
     # Linked modes of jobs (i,j)
     model.addConstrs((gp.quicksum(x[i, m, t] for t in range(T)) <= gp.quicksum(x[j, m, t] for t in range(T)) 
-                      for i,j in L for m in range(M)), name="linked")
+                      for i,j in L for m in range(M[i])), name="linked")
     
     # Zero time slots 
-    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots")
-    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(latest_starting_times[i]+1, T)), name="zero_time_slots")
-    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="zero_time_slots_onoff")
-    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(latest_starting_times[i]+p[i][m]+1, T)), name="zero_time_slots_onoff")
+    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(earliest_starting_times[i])), name="zero_time_slots")
+    model.addConstrs((x[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(latest_starting_times[i]+1, T)), name="zero_time_slots")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(earliest_starting_times[i])), name="zero_time_slots_onoff")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(latest_starting_times[i]+p[i][m]+1, T)), name="zero_time_slots_onoff")
     
     return model, divisor
 

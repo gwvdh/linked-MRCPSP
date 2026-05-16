@@ -28,6 +28,7 @@ PhaseTimeline = Dict[int, Dict[int, int]]
 
 def generate_instance(
     number_of_processes: int,
+    xml_files: Optional[List[str]] = None,
     max_phases: int = 3,
     min_base_duration: float = 1.0,
     max_base_duration: float = 5.0,
@@ -37,11 +38,13 @@ def generate_instance(
     arrival_rate: float = 0.7,
     batch_size: float = 3.0,
     verbose: bool = True,
-) -> List[Process]:
+) -> Tuple[List[Process], List[str]]:
     """
     Generate a list of processes with randomised phase profiles.
 
     :param number_of_processes: Total number of processes to generate
+    :param xml_files: Per-phase RA-PST XML files. If None, uses the default
+        XML_FILE for all phases. If shorter than max_phases, cycles the list.
     :param max_phases: Number of phase profiles to create (shared across processes)
     :param min_base_duration: Lower bound for task base durations
     :param max_base_duration: Upper bound for task base durations
@@ -51,14 +54,29 @@ def generate_instance(
     :param arrival_rate: Rate λ of the Poisson arrival process
     :param batch_size: Mean batch size (Poisson-distributed)
     :param verbose: Print per-process summary
+    :return: A tuple of (processes, sorted global resource ID list)
     """
-    ra_pst = RA_PST(XML_FILE)
-    n_tasks = ra_pst.get_number_of_tasks()
-    n_modes = ra_pst.get_number_of_modes()
+    # Resolve per-phase XML files; cycle the list if shorter than max_phases
+    if xml_files is None:
+        xml_files = [XML_FILE] * max_phases
+    else:
+        xml_files = [xml_files[i % len(xml_files)] for i in range(max_phases)]
+
+    # Parse one RA-PST per phase
+    ra_psts = [RA_PST(f) for f in xml_files]
+
+    # Build global resource ID list (sorted union across all phases)
+    global_resource_ids: list[str] = sorted(
+        {rid for rp in ra_psts for rid in rp.resource_ids}
+    )
+    for rp in ra_psts:
+        rp._global_resource_ids = global_resource_ids
 
     # Generate phase profiles
     phase_profiles: List[PhaseProfile] = []
-    for _ in range(max_phases):
+    for ra_pst in ra_psts:
+        n_tasks = ra_pst.get_number_of_tasks()
+        n_modes = ra_pst.get_number_of_modes()
         base_durations = [
             random.uniform(min_base_duration, max_base_duration)
             for _ in range(n_tasks)
@@ -83,6 +101,7 @@ def generate_instance(
         scale=1.0 / arrival_rate, size=number_of_processes
     )
     batch_sizes = np.random.poisson(batch_size, number_of_processes)
+
     # Generate processes
     processes: List[Process] = []
     start_time = 0
@@ -108,7 +127,7 @@ def generate_instance(
             )
             i += 1
 
-    return processes
+    return processes, global_resource_ids
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +157,7 @@ def _schedule_phase(
     phase_timelines: List[Dict],
 ) -> int:
     """
-    Walk all tasks in one phase, accumulate resource usage into 
+    Walk all tasks in one phase, accumulate resource usage into
     phase_timelines, and return the time at which the phase ends.
     """
     preds = process.network_type.value[phase_index]
@@ -168,8 +187,8 @@ def _schedule_phase(
 
 def simulate_extremal(processes: List[Process], max_phases: int) -> List[List[PhaseTimeline]]:
     """
-    For each resource index, build per-phase timelines using the mode that 
-    maximises demand on that resource. 
+    For each resource index, build per-phase timelines using the mode that
+    maximises demand on that resource.
     """
     all_resource_indices: List[int] = sorted(
         {
@@ -188,7 +207,6 @@ def simulate_extremal(processes: List[Process], max_phases: int) -> List[List[Ph
         phase_timelines = _make_phase_timelines(max_phases)
 
         for process in processes:
-            # get_min/max_resource_demand_mode now receives a plain int
             modes = process.get_max_resource_demand_mode(resource)
             n_active = _active_phases(process.network_type)
             phase_end: List[int] = []
@@ -257,9 +275,11 @@ def compute_min_demands(processes: List[Process], max_phases: int) -> List[Dict[
 
     for process in processes:
         for phase_id, phase_tasks in enumerate(process.tasks):
-            if phase_id >= max_phases: break
+            if phase_id >= max_phases:
+                break
             for task in phase_tasks:
-                if task is None: continue
+                if task is None:
+                    continue
                 n_modes = len(task.resource)
                 for res in {r for r in task.resource if r is not None}:
                     min_req = int(all(task.resource[m] == res for m in range(n_modes)))
@@ -267,11 +287,10 @@ def compute_min_demands(processes: List[Process], max_phases: int) -> List[Dict[
     return [dict(d) for d in min_demands]
 
 
-
 def get_extremal_demands(timelines: List[List[PhaseTimeline]]) -> List[Dict[int, int]]:
     """
     From a timeline of phases, return some extremal demand for each phase.
-    :param timelines: List of phase timelines where jobs are scheduled at their earliest start time. 
+    :param timelines: List of phase timelines where jobs are scheduled at their earliest start time.
     """
     n_phases = len(timelines[0])
 
@@ -332,6 +351,6 @@ def get_capacity(min_demand: int, max_demand: int, scarcity: float) -> int:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    procs = generate_instance(number_of_processes=60, verbose=True)
+    procs, _ = generate_instance(number_of_processes=60, verbose=True)
     demands = get_min_max_demands(procs, max_phases=3)
     print("Min/max demands:", demands)

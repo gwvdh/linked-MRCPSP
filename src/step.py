@@ -9,7 +9,7 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     """
     n: number of activities
     T: number of time slots 1,...,T
-    M: number of modes
+    M: number of modes for each activity
     R: List of resource capacities R[k]
     E: List of pairs of activity indices (i,j) indicating precedence relations
     p: List of processing times for each activity i in each mode m p[i][m]
@@ -42,41 +42,41 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
         i: range(earliest_starting_times[i], min(latest_starting_times[i] + 1, T))
         for i in range(n)
     }
-    step_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
+    step_sets = [(i, m, t) for i in range(n) for m in range(M[i]) for t in range(T)]
     z = model.addVars(step_sets, vtype=GRB.BINARY, name="step")
 
     # Objective
     if obj == "makespan":
-        model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M[n-1])), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for m in range(M) for i in range(n) for t in z_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for i in range(n) for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
     elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - earliest_starting_times[i]) for m in range(M) for i in O for t in z_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - earliest_starting_times[i]) for i in O for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once
-    model.addConstrs((gp.quicksum(z[i, m, latest_starting_times[i]] for m in range(M)) == 1 for i in range(n)), name="schedule")
-    model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M)) == 1 for i in range(n)), name="schedule")
+    model.addConstrs((gp.quicksum(z[i, m, latest_starting_times[i]] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
+    model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
 
     # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
-    model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M) for t in range(1, T)), name="started_same_mode")
+    model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M[i]) for t in range(1, T)), name="started_same_mode")
 
     # Precedence relations between jobs (i,j)
     model.addConstrs((
-        gp.quicksum((t + p[i][m]) * (z[i, m, t] - (z[i, m, t-1] if t-1>=0 else 0)) for t in range(T) for m in range(M)) <= 
-        gp.quicksum(t * (z[j, m, t] - (z[j, m, t-1] if t-1>=0 else 0)) for t in range(T) for m in range(M))
+        gp.quicksum((t + p[i][m]) * (z[i, m, t] - (z[i, m, t-1] if t-1>=0 else 0)) for t in range(T) for m in range(M[i])) <= 
+        gp.quicksum(t * (z[j, m, t] - (z[j, m, t-1] if t-1>=0 else 0)) for t in range(T) for m in range(M[j]))
         for i,j in E), 
         name="precedence")
 
     # Resource availability
-    model.addConstrs((gp.quicksum(r[i][m][k] * (z[i, m, t] - (z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0)) for m in range(M) for i in range(n)) <= R[k] 
+    model.addConstrs((gp.quicksum(r[i][m][k] * (z[i, m, t] - (z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0)) for i in range(n) for m in range(M[i])) <= R[k] 
                      for t in range(T) for k in range(len(R))), name="resource")
 
     # Linked modes of jobs (i,j)
-    model.addConstrs((z[i, m, T-1] == z[j, m, T-1] for i,j in L for m in range(M)), name="linked")
+    model.addConstrs((z[i, m, T-1] == z[j, m, T-1] for i,j in L for m in range(M[i])), name="linked")
     
     # Earliest start times
-    model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="earliest_start_times")
+    model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(earliest_starting_times[i])), name="earliest_start_times")
     
     return model, divisor
 
@@ -84,7 +84,7 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     """
     n: number of activities
     T: number of time slots 1,...,T
-    M: number of modes
+    M: number of modes for each activity
     R: List of resource capacities R[k]
     E: List of pairs of activity indices (i,j) indicating precedence relations
     p: List of processing times for each activity i in each mode m p[i][m]
@@ -117,40 +117,40 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
         i: range(earliest_starting_times[i], min(latest_starting_times[i] + 1, T))
         for i in range(n)
     }
-    step_sets = [(i, m, t) for i in range(n) for m in range(M) for t in range(T)]
+    step_sets = [(i, m, t) for i in range(n) for m in range(M[i]) for t in range(T)]
     z = model.addVars(step_sets, vtype=GRB.BINARY, name="step")
 
     # Objective
     if obj == "makespan":
-        model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M[n-1])), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for m in range(M) for i in range(n) for t in z_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for i in range(n) for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
     elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - earliest_starting_times[i]) for m in range(M) for i in O for t in z_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - earliest_starting_times[i]) for i in O for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once
-    model.addConstrs((gp.quicksum(z[i, m, latest_starting_times[i]] for m in range(M)) == 1 for i in range(n)), name="schedule")
-    model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M)) == 1 for i in range(n)), name="schedule")
+    model.addConstrs((gp.quicksum(z[i, m, latest_starting_times[i]] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
+    model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
 
     # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
-    model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M) for t in range(1, T)), name="started_same_mode")
+    model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M[i]) for t in range(1, T)), name="started_same_mode")
 
     # Precedence relations between jobs (i,j)
     model.addConstrs((
-        gp.quicksum(z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0 for m in range(M)) >= 
-        gp.quicksum(z[j, m, t] for m in range(M)) for i,j in E for t in range(T)), 
+        gp.quicksum(z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0 for m in range(M[i])) >= 
+        gp.quicksum(z[j, m, t] for m in range(M[j])) for i,j in E for t in range(T)), 
         name="precedence_disaggregated")
 
     # Resource availability
-    model.addConstrs((gp.quicksum(r[i][m][k] * (z[i, m, t] - (z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0)) for m in range(M) for i in range(n)) <= R[k] 
+    model.addConstrs((gp.quicksum(r[i][m][k] * (z[i, m, t] - (z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0)) for i in range(n) for m in range(M[i])) <= R[k] 
                      for t in range(T) for k in range(len(R))), name="resource")
 
     # Linked modes of jobs (i,j)
-    model.addConstrs((z[i, m, T-1] == z[j, m, T-1] for i,j in L for m in range(M)), name="linked")
+    model.addConstrs((z[i, m, T-1] == z[j, m, T-1] for i,j in L for m in range(M[i])), name="linked")
     
     # Earliest start times
-    model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M) for t in range(earliest_starting_times[i])), name="earliest_start_times")
+    model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(earliest_starting_times[i])), name="earliest_start_times")
     
     return model, divisor
 

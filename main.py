@@ -109,7 +109,7 @@ def output_solution(
 
 def test_model(
     processes: List[Process],
-    ra_pst: RA_PST,
+    n_resources: int, 
     solver: str,
     scarcity: float,
     objective: str,
@@ -146,7 +146,7 @@ def test_model(
         processes=processes,
         scarcity=scarcity,
         max_start_time=max_start_time,
-        ra_pst=ra_pst,
+        n_resources=n_resources,
         min_max=min_max,
         max_phases=max_phases,
     )
@@ -301,9 +301,9 @@ def create_tables(instance_id, db: Database) -> None:
                 obj_val = sol_data["SolutionInfo"]["ObjVal"]
                 runtime = sol_data["SolutionInfo"]["Runtime"]
                 cell = (
-                    f"\\textbf{{{obj_val:.1f}}}"
+                    f"\\textbf{{{int(obj_val)}}}"
                     if status == GRB.OPTIMAL
-                    else f"{obj_val:.1f}"
+                    else f"{int(obj_val)}"
                 )
                 makespan_table += f" & {cell}"
                 runtime_table += f" & {runtime:.2f}s"
@@ -326,7 +326,7 @@ def main() -> None:
     ra_pst = RA_PST(XML_FILE)
 
     instance_parameters = {
-        "number_of_processes": 5,
+        "number_of_processes": 2,
         "arrival_rate": 0.5,
         "batch_size": 2,
         "max_phases": 3,
@@ -339,7 +339,7 @@ def main() -> None:
     }
     assert instance_parameters["min_base_duration"] * instance_parameters["min_resource_ratio"] >= 1.0
 
-    processes = generate_instance(
+    processes, global_resource_ids = generate_instance(
         number_of_processes=instance_parameters["number_of_processes"],
         arrival_rate=instance_parameters["arrival_rate"],
         batch_size=instance_parameters["batch_size"],
@@ -351,6 +351,7 @@ def main() -> None:
         resource_ratio_spread=instance_parameters["resource_ratio_spread"],
     )
     min_max = get_min_max_demands(processes=processes, max_phases=instance_parameters["max_phases"])
+    print(f"Resource ids: {global_resource_ids}")
 
     db_instance_id = db.add_instance(**instance_parameters)
     print(f"DB instance ID: {db_instance_id}")
@@ -360,7 +361,7 @@ def main() -> None:
             print(f"-"*50)
             test_model(
                 processes=processes,
-                ra_pst=ra_pst,
+                n_resources=len(global_resource_ids),
                 solver=model,
                 scarcity=scarcity,
                 objective="flow-time",
