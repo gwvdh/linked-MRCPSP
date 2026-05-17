@@ -1,34 +1,34 @@
 import sqlite3
-import json
 
 
 class Database:
     def __init__(self, filename: str):
         self.filename = filename
         self.conn = sqlite3.connect(self.filename)
+        self.conn.row_factory = sqlite3.Row  # column access by name
         self.cursor = self.conn.cursor()
         self.cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS instances
-            (
-                id                   INTEGER PRIMARY KEY,
-                number_of_processes  INTEGER,
-                arrival_rate         REAL,
-                batch_size           REAL,
-                max_phases           INTEGER,
-                min_base_duration    REAL,
-                max_base_duration    REAL,
-                min_resource_ratio   REAL,
+            CREATE TABLE IF NOT EXISTS instances (
+                id                    INTEGER PRIMARY KEY,
+                number_of_processes   INTEGER,
+                arrival_rate          REAL,
+                batch_size            REAL,
+                max_phases            INTEGER,
+                min_base_duration     REAL,
+                max_base_duration     REAL,
+                min_resource_ratio    REAL,
                 resource_ratio_center REAL,
                 resource_ratio_spread REAL,
-                timeout              INTEGER
+                timeout               INTEGER,
+                n_resources           INTEGER,
+                processes_file        TEXT
             )
             """
         )
         self.cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS solution
-            (
+            CREATE TABLE IF NOT EXISTS solution (
                 id             INTEGER PRIMARY KEY,
                 instance_id    INTEGER,
                 solver         TEXT,
@@ -70,8 +70,11 @@ class Database:
         resource_ratio_center: float,
         resource_ratio_spread: float,
         timeout: int,
+        n_resources: int = 0,
+        processes_file: str = "",
     ) -> int:
-        sql = """
+        self.cursor.execute(
+            """
             INSERT INTO instances (
                 number_of_processes,
                 arrival_rate,
@@ -82,12 +85,12 @@ class Database:
                 min_resource_ratio,
                 resource_ratio_center,
                 resource_ratio_spread,
-                timeout
+                timeout,
+                n_resources,
+                processes_file
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        self.cursor.execute(
-            sql,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
             (
                 number_of_processes,
                 arrival_rate,
@@ -99,16 +102,27 @@ class Database:
                 resource_ratio_center,
                 resource_ratio_spread,
                 timeout,
+                n_resources,
+                processes_file,
             ),
         )
         self.conn.commit()
         return self.cursor.lastrowid
 
-    def get_instance(self, id: int):
+    def update_instance_processes_file(
+        self, id: int, processes_file: str
+    ) -> None:
+        self.cursor.execute(
+            "UPDATE instances SET processes_file = ? WHERE id = ?",
+            (processes_file, id),
+        )
+        self.conn.commit()
+
+    def get_instance(self, id: int) -> sqlite3.Row | None:
         self.cursor.execute("SELECT * FROM instances WHERE id = ?", (id,))
         return self.cursor.fetchone()
 
-    def get_instances(self):
+    def get_instances(self) -> list[sqlite3.Row]:
         self.cursor.execute("SELECT * FROM instances")
         return self.cursor.fetchall()
 
@@ -129,7 +143,8 @@ class Database:
         objective: str,
         objective_val: float | None,
     ) -> int:
-        sql = """
+        self.cursor.execute(
+            """
             INSERT INTO solution (
                 instance_id,
                 solver,
@@ -143,9 +158,7 @@ class Database:
                 objective_val
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        self.cursor.execute(
-            sql,
+            """,
             (
                 instance_id,
                 solver,
@@ -175,7 +188,8 @@ class Database:
         objective: str,
         objective_val: float | None,
     ) -> int:
-        sql = """
+        self.cursor.execute(
+            """
             UPDATE solution
             SET
                 sol_file      = ?,
@@ -186,9 +200,7 @@ class Database:
                 objective     = ?,
                 objective_val = ?
             WHERE instance_id = ? AND solver = ? AND scarcity = ?
-        """
-        self.cursor.execute(
-            sql,
+            """,
             (
                 sol_file,
                 instance_file,
@@ -205,7 +217,9 @@ class Database:
         self.conn.commit()
         return self.cursor.lastrowid
 
-    def get_solution(self, instance_id: int, model_name: str, scarcity: float):
+    def get_solution(
+        self, instance_id: int, model_name: str, scarcity: float
+    ) -> sqlite3.Row | None:
         self.cursor.execute(
             """
             SELECT * FROM solution
@@ -215,7 +229,7 @@ class Database:
         )
         return self.cursor.fetchone()
 
-    def get_solutions(self, instance_id: int):
+    def get_solutions(self, instance_id: int) -> list[sqlite3.Row]:
         self.cursor.execute(
             "SELECT * FROM solution WHERE instance_id = ?", (instance_id,)
         )

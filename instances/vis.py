@@ -9,105 +9,106 @@ import matplotlib.ticker as ticker
 # PhaseTimeline[time][resource_index] = count
 PhaseTimeline = Dict[int, Dict[int, int]]
 
-_CMAP_NAME = "tab10"  # supports up to 10 distinct colours
+_PHASE_CMAP = "tab10"
 
 
-def _build_res_conf(resource_indices: List[int]) -> Dict[int, Dict[str, str]]:
-    """
-    Build a display-config dict for an arbitrary set of resource indices.
-
-    :param resource_indices: Sorted list of integer resource indices found in the data.
-    :returns: ``{resource_index: {"color": ..., "label": ...}}``
-    """
-    cmap = plt.get_cmap(_CMAP_NAME)
-    n = max(len(resource_indices), 1)
-    return {
-        idx: {
-            "color": cmap(i / n),
-            "label": f"Level {idx + 1}",
-        }
-        for i, idx in enumerate(resource_indices)
-    }
-
-
-def plot_timelines(
-    phase_timelines: List[PhaseTimeline],
-    filename: str = "timelines.png",
+def plot_combined_resource_demands(
+    timelines_by_resource: List[List[PhaseTimeline]],
+    resource_indices: List[int],
+    filename: str = "resource_demands.png",
     output_dir: str = "plots",
 ) -> None:
     """
-    Visualise resource usage per phase using stepped line charts.
+    One axes per resource, all combined into a single figure. Each axes shows
+    demand across all phases over time: phase contributions as stacked filled
+    step areas, total demand as a bold line.
 
-    :param phase_timelines: ``phase_timelines[phase][time][resource_index]``
-    :param filename: Output filename (saved inside *output_dir*)
-    :param output_dir: Directory to write the plot into (created if absent)
+    :param timelines_by_resource: ``[resource][phase][time][res_idx] = count``
+        Outer list aligned with *resource_indices*; inner list is one
+        PhaseTimeline per phase.
+    :param resource_indices: Integer resource indices for each entry of
+        *timelines_by_resource* (used for axis labels).
+    :param filename: Output filename saved inside *output_dir*.
+    :param output_dir: Directory to write the plot into (created if absent).
     """
-    all_times = [t for tl in phase_timelines for t in tl]
-    if not all_times:
-        print("No simulation data to plot.")
+    if not timelines_by_resource:
+        print("No timeline data to plot.")
         return
 
-    # Collect every resource index that appears across all phases
-    all_resource_indices: List[int] = sorted(
-        {
-            res
-            for tl in phase_timelines
-            for res_counts in tl.values()
-            for res in res_counts
-        }
-    )
-    res_conf = _build_res_conf(all_resource_indices)
+    n_resources = len(resource_indices)
+    n_phases = len(timelines_by_resource[0])
+    cmap = plt.get_cmap(_PHASE_CMAP)
+    phase_colors = [cmap(i / max(n_phases, 1)) for i in range(n_phases)]
 
-    min_t, max_t = min(all_times), max(all_times)
-    time_range = list(range(min_t, max_t + 2))
-
-    num_phases = len(phase_timelines)
     fig, axes = plt.subplots(
-        num_phases,
+        n_resources,
         1,
-        figsize=(12, 4 * num_phases),
-        sharex=True,
+        figsize=(14, 4 * n_resources),
+        sharex=False,
+        squeeze=False,
     )
-    if num_phases == 1:
-        axes = [axes]
 
-    for i, (ax, timeline) in enumerate(zip(axes, phase_timelines)):
-        max_y = 0
+    for row, (res_idx, res_timelines) in enumerate(
+        zip(resource_indices, timelines_by_resource)
+    ):
+        ax = axes[row, 0]
 
-        for res_idx, conf in res_conf.items():
-            y_values = [
-                timeline.get(t, {}).get(res_idx, 0) for t in time_range[:-1]
-            ] + [0]
-            max_y = max(max_y, max(y_values))
+        all_times = sorted({t for tl in res_timelines for t in tl})
+        if not all_times:
+            ax.set_visible(False)
+            continue
 
+        time_range = list(range(min(all_times), max(all_times) + 2))
+
+        phase_demands: List[List[int]] = [
+            [phase_tl.get(t, {}).get(res_idx, 0) for t in time_range[:-1]] + [0]
+            for phase_tl in res_timelines
+        ]
+
+        totals = [
+            sum(pd[i] for pd in phase_demands) for i in range(len(time_range))
+        ]
+
+        bottoms = [0] * len(time_range)
+        for phase_id, pd in enumerate(phase_demands):
+            tops = [b + d for b, d in zip(bottoms, pd)]
             ax.step(
                 time_range,
-                y_values,
+                tops,
                 where="post",
-                color=conf["color"],
-                label=conf["label"],
-                linewidth=2,
+                color=phase_colors[phase_id],
+                linewidth=1.0,
+                alpha=0.6,
             )
             ax.fill_between(
                 time_range,
-                y_values,
+                bottoms,
+                tops,
                 step="post",
-                color=conf["color"],
-                alpha=0.1,
+                color=phase_colors[phase_id],
+                alpha=0.35,
+                label=f"Phase {phase_id + 1}",
             )
+            bottoms = tops
 
-        ax.set_title(f"Phase {i + 1} Resource Demand")
+        ax.step(
+            time_range,
+            totals,
+            where="post",
+            color="black",
+            linewidth=2.0,
+            label="Total",
+        )
+
+        ax.set_title(f"Resource {res_idx + 1} — Combined Demand Across All Phases")
+        ax.set_xlabel("Time")
         ax.set_ylabel("Units Required")
+        ax.set_ylim(0, max(totals, default=0) + 1.5)
+        ax.legend(loc="upper right", framealpha=0.9)
         ax.grid(True, linestyle=":", alpha=0.6)
-        ax.set_ylim(0, max_y + 1.5)
         ax.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
 
-        if i == 0:
-            ax.legend(loc="upper right", framealpha=0.9)
-
-    plt.xlabel("Time (Simulation Ticks)")
-    plt.tight_layout()
-
     os.makedirs(output_dir, exist_ok=True)
+    plt.tight_layout()
     plt.savefig(os.path.join(output_dir, filename))
     plt.close()

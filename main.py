@@ -1,184 +1,123 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import pickle
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from gurobipy import GRB
-
-from instances.generator import generate_instance, get_capacity, get_min_max_demands
+from instances.generator import generate_instance, get_min_max_demands
 from instances.definitions import Process
 from instances.or_instance import get_or_instance
-from instances.xml_parser import RA_PST
-
 from src.pulse import pulse_model, pulse_model_disaggregated
 from src.step import step_model, step_model_disaggregated
 from src.onoff import onoff_model
 from src.onoff_pulse import onoff_pulse_model, onoff_pulse_model_disaggregated
 from src.continuous import continuous_model
-from src.vis_schedule import visualize_pulse_model, visualize_continuous_model, visualize_onoff_model
+from src.vis_schedule import (
+    visualize_pulse_model, visualize_continuous_model, visualize_onoff_model,
+)
 from database import Database
-
-XML_FILE = "rapst/full_rapst_permit.xml"
 
 MODELS = ["PDT", "PDDT", "SDT", "SDDT", "OODDT", "OOPDT", "OOPDDT", "MSEQCT"]
 SCARCITIES = [round(s * 0.1, 1) for s in range(11)]
 
+DEFAULT_PARAMS: Dict[str, Any] = {
+    "number_of_processes": 2,
+    "arrival_rate": 0.5,
+    "batch_size": 2,
+    "max_phases": 3,
+    "min_base_duration": 2.0,
+    "max_base_duration": 5.0,
+    "min_resource_ratio": 0.6,
+    "resource_ratio_center": 1.5,
+    "resource_ratio_spread": 1.0,
+    "timeout": 600,
+}
 
-# ---------------------------------------------------------------------------
-# Model selector
-# ---------------------------------------------------------------------------
+_MODEL_FNS = {
+    "PDT": pulse_model, 
+    "PDDT": pulse_model_disaggregated,
+    "SDT": step_model,
+    "SDDT": step_model_disaggregated,
+    "OODDT": onoff_model,
+    "OOPDT": onoff_pulse_model, 
+    "OOPDDT": onoff_pulse_model_disaggregated,
+    "MSEQCT": continuous_model,
+}
+# Explicit type overrides where default value type != desired argparse type
+_PARAM_TYPES = {"batch_size": float}
 
 
-def model_selector(
-    model: str,
-    n: int,
-    T: int,
-    M: int,
-    R: List[int],
-    E: List[List[int]],
-    p: List[List[int]],
-    L: List[List[int]],
-    r: List[List[List[int]]],
-    O: List[int],
-    ES: List[int],
-    VP: List[List[int]],
-    obj: str = "makespan",
-    timeout: int = 600,
-):
-    """Solve the given model with the given parameters."""
-    kwargs = dict(
-        n=n, T=T, M=M, R=R, E=E, p=p, L=L,
-        r=r, O=O, ES=ES, VP=VP, obj=obj, timeout=timeout,
-    )
-    dispatch = {
-        "PDT":    pulse_model,
-        "PDDT":   pulse_model_disaggregated,
-        "SDT":    step_model,
-        "SDDT":   step_model_disaggregated,
-        "OODDT":  onoff_model,
-        "OOPDT":  onoff_pulse_model,
-        "OOPDDT": onoff_pulse_model_disaggregated,
-        "MSEQCT": continuous_model,
-    }
-    if model not in dispatch:
+def model_selector(model: str, **kwargs):
+    if model not in _MODEL_FNS:
         raise ValueError(f"Unknown model: {model!r}")
-    return dispatch[model](**kwargs)
-
-
-# ---------------------------------------------------------------------------
-# I/O helpers
-# ---------------------------------------------------------------------------
-
-
-def _ensure_dir(path: str) -> None:
-    os.makedirs(path, exist_ok=True)
-
-
-def output_instance(
-    instance: Dict[str, Any],
-    scarcity: float,
-    folder_name: str = "",
-) -> str:
-    """Write the given instance to a file."""
-    _ensure_dir(f"data/{folder_name}")
-    filename = f"data/{folder_name}/instance_{scarcity}.json"
-    with open(filename, "w") as f:
-        json.dump(instance, f)
-    return filename
-
-
-def output_solution(
-    model,
-    model_name: str,
-    scarcity: float,
-    folder_name: str = "",
-) -> str:
-    """Write the given gurobi solution to a file."""
-    _ensure_dir(f"data/{folder_name}")
-    sol_file = f"data/{folder_name}/solution_{model_name}_{scarcity}.json"
-    model.write(sol_file)
-    return sol_file
-
-
-# ---------------------------------------------------------------------------
-# Single model run
-# ---------------------------------------------------------------------------
+    return _MODEL_FNS[model](**kwargs)
 
 
 def test_model(
     processes: List[Process],
-    n_resources: int, 
+    n_resources: int,
     solver: str,
     scarcity: float,
     objective: str,
-    min_max: List[List[Tuple[int, int]]],
+    min_max: List[Tuple[int, int]],
     max_phases: int = 3,
     timeout: int = 600,
     db: Optional[Database] = None,
     db_instance_id=None,
 ) -> None:
-    """
-    Solve the given set of processes using the given solver with the given parameters.
-    :param processes: The processes to solve.
-    :param ra_pst: The RA-PST object.
-    :param solver: The solver to use.
-    :param scarcity: The scarcity of the instance.
-    :param objective: The objective to optimize.
-    :param max_phases: The maximum number of phases.
-    :param timeout: The maximum runtime of the solver.
-    :param db: The SQLITE database object.
-    :param db_instance_id: The ID of the instance to solve.
-    """
     if db is None:
         db = Database("database.db")
     if db_instance_id is None:
         raise ValueError("db_instance_id must be provided")
 
     print(f"Model: {solver}\tScarcity: {scarcity}")
-
-    max_start_time = int(
-        max(p.start_time + p.max_processing_time() for p in processes)
-    )
-
+    max_start_time = int(max(p.start_time + p.max_processing_time() for p in processes))
     instance = get_or_instance(
-        processes=processes,
-        scarcity=scarcity,
+        processes=processes, 
+        scarcity=scarcity, 
         max_start_time=max_start_time,
-        n_resources=n_resources,
-        min_max=min_max,
+        n_resources=n_resources, 
+        min_max=min_max, 
         max_phases=max_phases,
     )
-    instance_file = output_instance(
-        instance, scarcity, folder_name=str(db_instance_id)
-    )
+
+    base = f"data/{db_instance_id}"
+    os.makedirs(base, exist_ok=True)
+    instance_file = f"{base}/instance_{scarcity}.json"
+    with open(instance_file, "w") as f:
+        json.dump(instance, f)
 
     t0 = time.time()
     model, divisor = model_selector(
-        model=solver,
-        n=instance["n"],
-        T=instance["T"],
-        M=instance["M"],
+        solver,
+        n=instance["n"], 
+        T=instance["T"], 
+        M=instance["M"], 
         R=instance["R"],
-        E=instance["E"],
-        p=instance["p"],
-        L=instance["L"],
+        E=instance["E"], 
+        p=instance["p"], 
+        L=instance["L"], 
         r=instance["r"],
-        O=instance["O"],
-        ES=instance["ES"],
+        O=instance["O"], 
+        ES=instance["ES"], 
         VP=instance["VP"],
-        obj=objective,
+        obj=objective, 
         timeout=timeout,
     )
-
     model.update()
-    print(f"Model: {model.NumVars} vars, {model.NumConstrs} constraints, {model.NumNZs} non-zeros")
+    print(
+        f"Model: {model.NumVars} vars, "
+        f"{model.NumConstrs} constraints, "
+        f"{model.NumNZs} non-zeros"
+    )
     model.optimize()
 
-    solution_file = output_solution(
-        model, solver, scarcity, folder_name=str(db_instance_id)
-    )
+    sol_file = f"{base}/solution_{solver}_{scarcity}.json"
+    model.write(sol_file)
 
     is_feasible = not (
         model.status == GRB.INFEASIBLE
@@ -191,191 +130,189 @@ def test_model(
         print("\033[91mNo solution found within time limit\033[0m")
     else:
         print("\033[92mFeasible solution found\033[0m")
-        print(f"\033[1mRunning time: {time.time() - t0:.3f}s\tObjective: {model.objVal * divisor:.0f}\033[0m")
-        if solver in ("PDT", "PDDT", "OOPDT", "OOPDDT"):
-            visualize_pulse_model(
-                model=model,
-                n=instance["n"],
-                T=instance["T"],
-                M=instance["M"],
-                R=instance["R"],
-                p=instance["p"],
-                r=instance["r"],
-                processes=processes,
-                divisor=divisor,
-                filename=f"Schedule_{scarcity}",
-            )
-        elif solver in ("OODDT"):
-            visualize_onoff_model(
-                model=model,
-                n=instance["n"],
-                T=instance["T"],
-                M=instance["M"],
-                R=instance["R"],
-                p=instance["p"],
-                r=instance["r"],
-                processes=processes,
-                divisor=divisor,
-                filename=f"Schedule_{scarcity}_onoff",
-            )
-        elif solver in ("MSEQCT"):
-            visualize_continuous_model(
-                model=model,
-                n=instance["n"],
-                T=instance["T"],
-                M=instance["M"],
-                R=instance["R"],
-                p=instance["p"],
-                r=instance["r"],
-                processes=processes,
-                divisor=divisor,
-                filename=f"Schedule_{scarcity}_cont",
-            )
+        print(
+            f"\033[1mRunning time: {time.time() - t0:.3f}s\t"
+            f"Objective: {model.objVal * divisor:.0f}\033[0m"
+        )
+        vis_kw = dict(
+            model=model, 
+            n=instance["n"], 
+            T=instance["T"], 
+            M=instance["M"],
+            R=instance["R"], 
+            p=instance["p"], 
+            r=instance["r"],
+            processes=processes, 
+            divisor=divisor,
+        )
+        if solver in {"PDT", "PDDT", "OOPDT", "OOPDDT"}:
+            visualize_pulse_model(**vis_kw, filename=f"Schedule_{scarcity}")
+        elif solver == "OODDT":
+            visualize_onoff_model(**vis_kw, filename=f"Schedule_{scarcity}_onoff")
+        elif solver == "MSEQCT":
+            visualize_continuous_model(**vis_kw, filename=f"Schedule_{scarcity}_cont")
 
     db.add_solution(
-        instance_id=db_instance_id,
-        solver=solver,
-        sol_file=solution_file,
-        instance_file=instance_file,
-        scarcity=scarcity,
+        instance_id=db_instance_id, 
+        solver=solver, 
+        sol_file=sol_file,
+        instance_file=instance_file, 
+        scarcity=scarcity, 
         divisor=divisor,
-        solved=True,
-        status=model.status,
+        solved=True, 
+        status=model.status, 
         objective=objective,
         objective_val=model.objVal * divisor if is_feasible else None,
     )
 
 
-# ---------------------------------------------------------------------------
-# LaTeX table generation
-# ---------------------------------------------------------------------------
-
-
-def create_tables(instance_id, db: Database) -> None:
-    """Create a LaTeX table for the given instance and its solutions."""
-    instance_row = db.get_instance(instance_id)
-    n_processes = instance_row[1]
+def create_tables(instance_id: int, db: Database) -> None:
+    n_proc = db.get_instance(instance_id)["number_of_processes"]
+    cols = "c|" * len(SCARCITIES)
+    scarcity_row = " & ".join(f"{s:.1f}" for s in SCARCITIES)
 
     def _header(caption: str, label: str) -> str:
-        cols = "c|" * len(SCARCITIES)
-        scarcity_row = " & ".join(f"{s:.1f}" for s in SCARCITIES)
         return (
-            "\\begin{table}[ht]\n"
-            "\\centering\n"
-            f"\\caption{{{caption} ({n_processes} processes). "
+            "\\begin{table}[ht]\n\\centering\n"
+            f"\\caption{{{caption} ({n_proc} processes). "
             "An entry with - indicates an infeasible instance.}}\n"
             f"\\label{{{label}}}\n"
             f"\\begin{{tabular}}{{|l|{cols}}}\n"
-            "\\hline\n"
-            f"\\(RS\\) & {scarcity_row} \\\\ \\hline\n"
+            f"\\hline\n\\(RS\\) & {scarcity_row} \\\\ \\hline\n"
         )
 
     makespan_table = _header("Makespan", "tab:makespan")
     runtime_table = _header("Runtime", "tab:runtime")
+    footer = "\\end{tabular}\n\\end{table}\n"
 
     for model_name in MODELS:
-        makespan_table += model_name
-        runtime_table += model_name
-
+        ms_row = rt_row = model_name
         for scarcity in SCARCITIES:
-            solution = db.get_solution(
-                instance_id=instance_id,
-                model_name=model_name,
-                scarcity=scarcity,
-            )
-            if solution is None:
-                makespan_table += " & ?"
-                runtime_table += " & ?"
+            sol = db.get_solution(instance_id, model_name, scarcity)
+            if sol is None:
+                ms_row += " & ?"; rt_row += " & ?"
                 continue
-
-            sol_data = json.load(open(solution[3]))
-            status = sol_data["SolutionInfo"]["Status"]
-            sol_count = sol_data["SolutionInfo"]["SolCount"]
-
-            if status == GRB.INFEASIBLE or (
-                sol_count == 0 and status == GRB.TIME_LIMIT
-            ):
-                makespan_table += " & -"
-                runtime_table += " & -"
+            info = json.load(open(sol["sol_file"]))["SolutionInfo"]
+            status, sol_count = info["Status"], info["SolCount"]
+            if status == GRB.INFEASIBLE or (sol_count == 0 and status == GRB.TIME_LIMIT):
+                ms_row += " & -"; rt_row += " & -"
             else:
-                obj_val = sol_data["SolutionInfo"]["ObjVal"]
-                runtime = sol_data["SolutionInfo"]["Runtime"]
-                cell = (
-                    f"\\textbf{{{int(obj_val)}}}"
-                    if status == GRB.OPTIMAL
-                    else f"{int(obj_val)}"
-                )
-                makespan_table += f" & {cell}"
-                runtime_table += f" & {runtime:.2f}s"
+                obj = int(info["ObjVal"])
+                cell = f"\\textbf{{{obj}}}" if status == GRB.OPTIMAL else str(obj)
+                ms_row += f" & {cell}"; rt_row += f" & {info['Runtime']:.2f}s"
+        makespan_table += ms_row + " \\\\ \\hline\n"
+        runtime_table += rt_row + " \\\\ \\hline\n"
 
-        makespan_table += " \\\\ \\hline\n"
-        runtime_table += " \\\\ \\hline\n"
-
-    footer = "\\end{tabular}\n\\end{table}\n"
     print(makespan_table + footer)
     print(runtime_table + footer)
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def cmd_generate(args: argparse.Namespace) -> None:
+    params = {k: getattr(args, k) for k in DEFAULT_PARAMS}
+    assert params["min_base_duration"] * params["min_resource_ratio"] >= 1.0, \
+        "min_base_duration * min_resource_ratio must be >= 1.0"
 
-
-def main() -> None:
-    db = Database("database.db")
-    ra_pst = RA_PST(XML_FILE)
-
-    instance_parameters = {
-        "number_of_processes": 2,
-        "arrival_rate": 0.5,
-        "batch_size": 2,
-        "max_phases": 3,
-        "min_base_duration": 2.0,
-        "max_base_duration": 5.0,
-        "min_resource_ratio": 0.6,
-        "resource_ratio_center": 1.5,
-        "resource_ratio_spread": 1.0,
-        "timeout": 600,
-    }
-    assert instance_parameters["min_base_duration"] * instance_parameters["min_resource_ratio"] >= 1.0
-
-    processes, global_resource_ids = generate_instance(
-        number_of_processes=instance_parameters["number_of_processes"],
-        arrival_rate=instance_parameters["arrival_rate"],
-        batch_size=instance_parameters["batch_size"],
-        max_phases=instance_parameters["max_phases"],
-        min_base_duration=instance_parameters["min_base_duration"],
-        max_base_duration=instance_parameters["max_base_duration"],
-        min_resource_ratio=instance_parameters["min_resource_ratio"],
-        resource_ratio_center=instance_parameters["resource_ratio_center"],
-        resource_ratio_spread=instance_parameters["resource_ratio_spread"],
+    xml_files = (
+        [e.split(",") if "," in e else e for e in args.xml_files]
+        if getattr(args, "xml_files", None) is not None else None
     )
-    min_max = get_min_max_demands(processes=processes, max_phases=instance_parameters["max_phases"])
-    print(f"Resource ids: {global_resource_ids}")
+    gen_params = {k: v for k, v in params.items() if k != "timeout"}
+    processes, global_resource_ids = generate_instance(xml_files=xml_files, **gen_params)
+    n_resources = len(global_resource_ids)
 
-    db_instance_id = db.add_instance(**instance_parameters)
-    print(f"DB instance ID: {db_instance_id}")
+    db = Database("database.db")
+    db_instance_id = db.add_instance(**params, n_resources=n_resources, processes_file="")
 
-    for model in MODELS:
-        for scarcity in SCARCITIES:
-            print(f"-"*50)
+    data_dir = f"data/{db_instance_id}"
+    os.makedirs(data_dir, exist_ok=True)
+    processes_file = f"{data_dir}/processes.pkl"
+    with open(processes_file, "wb") as f:
+        pickle.dump((processes, global_resource_ids), f)
+
+    db.update_instance_processes_file(db_instance_id, processes_file)
+    db.close()
+    print(f"Instance ID : {db_instance_id}")
+    print(f"Resources   : {n_resources}  {global_resource_ids}")
+    print(f"Saved to    : {processes_file}")
+
+
+def cmd_run(args: argparse.Namespace) -> None:
+    db = Database("database.db")
+    row = db.get_instance(args.instance_id)
+    if row is None:
+        print(f"Error: instance {args.instance_id} not found in database.")
+        return
+
+    with open(row["processes_file"], "rb") as f:
+        processes, _ = pickle.load(f)
+
+    min_max = get_min_max_demands(processes=processes, max_phases=row["max_phases"])
+    for model_name in (args.models or MODELS):
+        for scarcity in (args.scarcities or SCARCITIES):
+            if db.get_solution(args.instance_id, model_name, scarcity) is not None:
+                print(f"Skipping {model_name} @ {scarcity:.1f} (already in DB)")
+                continue
+            print("-" * 50)
             test_model(
-                processes=processes,
-                n_resources=len(global_resource_ids),
-                solver=model,
-                scarcity=scarcity,
-                objective="flow-time",
-                min_max=min_max,
-                max_phases=instance_parameters["max_phases"],
-                timeout=instance_parameters["timeout"],
-                db=db,
-                db_instance_id=db_instance_id,
+                processes=processes, 
+                n_resources=row["n_resources"],
+                solver=model_name, 
+                scarcity=scarcity, 
+                objective=args.objective,
+                min_max=min_max, 
+                max_phases=row["max_phases"],
+                timeout=row["timeout"], 
+                db=db, 
+                db_instance_id=args.instance_id,
             )
 
-    #print(db.get_instances())
-    #print(db.get_solutions(instance_id=db_instance_id))
-    create_tables(db_instance_id, db)
+    create_tables(args.instance_id, db)
+    db.close()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Resource-constrained scheduling experiment runner"
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    gen = sub.add_parser("generate", help="Generate a new instance and save it to the DB")
+    for k, v in DEFAULT_PARAMS.items():
+        gen.add_argument(
+            f"--{k.replace('_', '-')}",
+            type=_PARAM_TYPES.get(k, type(v)),
+            default=v,
+        )
+    gen.add_argument(
+        "--xml-files", nargs="+", default=None, dest="xml_files",
+        metavar="FILE[,FILE…]",
+        help=(
+            "RA-PST XML file(s) per phase. Each argument corresponds to one phase "
+            "(cycled if fewer than --max-phases are given). Use a comma-separated "
+            "list to define a per-process pool for that phase, e.g.: "
+            "--xml-files phase0.xml \"phase1a.xml,phase1b.xml\""
+        ),
+    )
+    gen.set_defaults(func=cmd_generate)
+
+    run = sub.add_parser(
+        "run", help="Solve models for an existing instance (skips already-solved pairs)"
+    )
+    run.add_argument("instance_id", type=int, help="DB instance ID returned by 'generate'")
+    run.add_argument("--objective", default="flow-time", choices=["makespan", "flow-time"])
+    run.add_argument(
+        "--models", nargs="+", choices=MODELS, default=None, metavar="MODEL",
+        help=f"Subset of models to run (default: all). Choices: {MODELS}",
+    )
+    run.add_argument(
+        "--scarcities", nargs="+", type=float, default=None, metavar="S",
+        help="Subset of scarcity levels to run (default: all 0.0–1.0)",
+    )
+    run.set_defaults(func=cmd_run)
+
+    return parser
 
 
 if __name__ == "__main__":
-    main()
+    args = build_parser().parse_args()
+    args.func(args)

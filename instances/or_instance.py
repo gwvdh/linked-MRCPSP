@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
-import numpy as np
 
 from .generator import get_capacity
 from .definitions import Process, NetworkType
@@ -13,29 +12,25 @@ def get_or_instance(
     scarcity: float,
     max_start_time: int,
     n_resources: int,
-    min_max: List[List[Tuple[int, int]]],
+    min_max: List[Tuple[int, int]],  # per resource, shared across phases
     max_phases: int = 3,
 ) -> Dict[str, Any]:
     """
-    Translate generated processes into an OR instance. 
+    Translate generated processes into an OR instance.
+
+    Resources are shared across all phases: R[r] is the single capacity for
+    resource r regardless of which phase a task belongs to.
 
     Returns a dict with keys: n, T, M, R, E, L, p, r, O, ES, VP.
     """
-    phase_modes: List[int] = [
-        processes[0].phases[i].number_of_modes for i in range(max_phases)
-    ]
+    assert len(min_max) == n_resources, (
+        f"Expected {n_resources} (min, max) pairs, got {len(min_max)}"
+    )
 
-    capacities: List[List[int]] = [
-        [get_capacity(mn, mx, scarcity) for mn, mx in min_max[i]]
-        for i in range(max_phases)
-    ]
-    print(f"Capacities: {capacities}")
-    R: List[int] = [
-        capacities[i][j]
-        for i in range(max_phases)
-        for j in range(n_resources)
-    ]
-    total_resources = max_phases * n_resources
+    # Single capacity vector — one entry per resource, shared across all phases.
+    R: List[int] = [get_capacity(mn, mx, scarcity) for mn, mx in min_max]
+    print(f"Capacities: {R}")
+    total_resources = n_resources
 
     def _zero_p(n_modes: int) -> List[int]:
         return [0] * n_modes
@@ -43,44 +38,37 @@ def get_or_instance(
     def _zero_r(n_modes: int) -> List[List[int]]:
         return [[0] * total_resources for _ in range(n_modes)]
 
-    job_idx = 1          # next job index to assign
+    job_idx = 1  # next job index to assign
     p: List[List[int]] = [_zero_p(1)]
     r: List[List[List[int]]] = [_zero_r(1)]
     M: List[int] = [1]
     ES: List[int] = [0]
-    E: List[List[int]] = []   # precedence pairs [i, j]  (i before j)
-    L: List[List[int]] = []   # linked-mode pairs
-    O: List[int] = []         # last real job of each process
+    E: List[List[int]] = []  # precedence pairs [i, j]  (i before j)
+    L: List[List[int]] = []  # linked-mode pairs
+    O: List[int] = []  # last real job of each process
 
-    # phase_last_job[phase_index] = job index of last task in that phase
-    # (used to wire inter-phase precedences)
     for process in processes:
         n_active = len(process.network_type.value)
-        # first_job[phase] / last_job[phase] within this process
         phase_last: List[Optional[int]] = [None] * n_active
 
         for i in range(n_active):
             phase_tasks = process.tasks[i]
             n_tasks_in_phase = len(phase_tasks)
-            M_i = phase_modes[i]
+            # Modes are per-process per-phase: different processes may use
+            # different RA-PSTs for the same phase index.
+            M_i = process.phases[i].number_of_modes
 
             for j, task in enumerate(phase_tasks):
                 # ---- precedence edges --------------------------------- #
                 if j == 0:
-                    # First task of this phase
                     preds = process.network_type.value[i]
-
                     if not preds:
-                        # No phase predecessor → connect from source
                         E.append([0, job_idx])
                     else:
                         for pred_phase in preds:
                             if phase_last[pred_phase] is not None:
-                                E.append(
-                                    [phase_last[pred_phase], job_idx]
-                                )
+                                E.append([phase_last[pred_phase], job_idx])
                 else:
-                    # Sequential within phase
                     E.append([job_idx - 1, job_idx])
 
                 # ---- linked-mode pairs -------------------------------- #
@@ -95,10 +83,7 @@ def get_or_instance(
                     p[job_idx][m] = task.duration[m]
                     res_idx: Optional[int] = task.resource[m]
                     if res_idx is not None:
-                        # Offset by phase so each (phase, resource) pair
-                        # maps to a unique column in r
-                        col = i * n_resources + res_idx
-                        r[job_idx][m][col] = 1
+                        r[job_idx][m][res_idx] = 1
 
                 ES.append(process.start_time)
 
@@ -107,7 +92,6 @@ def get_or_instance(
 
                 job_idx += 1
 
-        # Last task of the final active phase → connect to sink later
         last_phase = n_active - 1
         if phase_last[last_phase] is not None:
             O.append(phase_last[last_phase])
@@ -122,7 +106,7 @@ def get_or_instance(
         E.append([last_job, sink])
     n = sink + 1
 
-    # Transitive closure of precedence relations E
+    # Transitive closure of precedence relations
     adj: Dict[int, set] = {i: set() for i in range(n)}
     for i, j in E:
         adj[i].add(j)
@@ -133,12 +117,11 @@ def get_or_instance(
     TE = [[i, j] for i in range(n) for j in adj[i]]
 
     e_set = {(a, b) for a, b in TE} | {(b, a) for a, b in TE}
-    VP = [] 
-    VP = [ # Inverse of precedence pairs. WARNING: it may be very large!
+    VP = [
         [i, j]
         for i in range(n)
         for j in range(n)
-        if i!= j and (i, j) not in e_set
+        if i != j and (i, j) not in e_set
     ]
 
     return {
