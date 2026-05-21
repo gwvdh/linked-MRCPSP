@@ -37,7 +37,7 @@ class PhaseProfile:
     def __init__(
         self,
         base_durations: list[float],
-        resource_ratios: list[float],
+        resource_ratios: dict[str, float],
         ra_pst: RA_PST,
     ):
         self.base_durations = base_durations
@@ -51,10 +51,6 @@ class PhaseProfile:
             f"Expected {self.number_of_tasks} base durations, "
             f"got {len(base_durations)}"
         )
-        assert len(resource_ratios) == self.number_of_modes, (
-            f"Expected {self.number_of_modes} resource ratios, "
-            f"got {len(resource_ratios)}"
-        )
 
     def get_task(self, mode: int, task_id: int):
         return self.ra_pst.paths[mode][task_id]
@@ -62,7 +58,9 @@ class PhaseProfile:
     def get_duration(self, task_id: int, mode: int) -> float:
         assert 0 <= task_id < self.number_of_tasks
         assert 0 <= mode < self.number_of_modes
-        return self.base_durations[task_id] * self.resource_ratios[mode]
+        node = self.ra_pst.paths[mode][task_id]
+        multiplier = self.resource_ratios.get(node.resource_id, 1.0) # default ratio 1.0
+        return self.base_durations[task_id] * multiplier
 
     def __str__(self) -> str:
         return f"PhaseProfile(ratios={self.resource_ratios})"
@@ -78,7 +76,7 @@ class Process:
         self.network_type = network_type
         self.phases = phases
         self.start_time = start_time
-        self.tasks = self._define_tasks(variance=0.2)
+        self.tasks = self._define_tasks(variance=0.0)
 
     def max_processing_time(self) -> int:
         """Return the max processing time of the process in any mode."""

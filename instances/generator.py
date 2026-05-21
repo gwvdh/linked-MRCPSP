@@ -19,11 +19,6 @@ XML_FILE = "rapst/full_rapst_permit.xml"
 PhaseTimeline = Dict[int, Dict[int, int]]
 
 
-# ---------------------------------------------------------------------------
-# Instance generation
-# ---------------------------------------------------------------------------
-
-
 def generate_instance(
     number_of_processes: int,
     xml_files: Optional[List[Union[str, List[str]]]] = None,
@@ -37,6 +32,7 @@ def generate_instance(
     batch_size: float = 3.0,
     verbose: bool = True,
 ) -> Tuple[List[Process], List[str]]:
+    """Generate a list of processes and a list of global resource IDs."""
     if xml_files is None:
         phase_pools = [[XML_FILE]] * max_phases
     else:
@@ -44,57 +40,56 @@ def generate_instance(
         phase_pools = [[e] if isinstance(e, str) else list(e) for e in raw]
 
     all_xml = sorted({f for pool in phase_pools for f in pool})
-    ra_pst_cache = {f: RA_PST(f) for f in all_xml}
+    ra_pst_options = {f: RA_PST(f) for f in all_xml}
     global_resource_ids = sorted(
-        {rid for rp in ra_pst_cache.values() for rid in rp.resource_ids}
+        {rid for rp in ra_pst_options.values() for rid in rp.resource_ids}
     )
-    for rp in ra_pst_cache.values():
+    for rp in ra_pst_options.values():
         rp._global_resource_ids = global_resource_ids
+
+    # Generate resource ratios
+    resource_ratios: dict[str, float] = {
+        id: max(
+            min_resource_ratio,
+            float(np.random.normal(resource_ratio_center, resource_ratio_spread)),
+        )
+        for id in global_resource_ids
+    }
+    resource_levels = sorted(global_resource_ids.copy())
 
     rng = np.random.default_rng()
     interarrival = rng.exponential(1.0 / arrival_rate, size=number_of_processes)
     batches = np.random.poisson(batch_size, number_of_processes)
 
-    processes, start_time, i = [], 0, 0
+    processes: List[Process] = []
+    start_time = 0
     for period, batch in enumerate(batches):
         if period > 0:
             start_time += int(interarrival[period])
         for _ in range(int(batch)):
-            if i >= number_of_processes:
-                break
+            if len(processes) >= number_of_processes: break
             phases = []
             for phase_idx in range(max_phases):
-                ra_pst = ra_pst_cache[random.choice(phase_pools[phase_idx])]
+                # Construct a phase for the current process
+                ra_pst = ra_pst_options[random.choice(phase_pools[phase_idx])]
                 phases.append(PhaseProfile(
                     base_durations=[
                         random.uniform(min_base_duration, max_base_duration)
                         for _ in range(ra_pst.get_number_of_tasks())
                     ],
-                    resource_ratios=[
-                        max(min_resource_ratio,
-                            np.random.normal(resource_ratio_center,
-                                             resource_ratio_spread))
-                        for _ in range(ra_pst.get_number_of_modes())
-                    ],
+                    resource_ratios=resource_ratios,
                     ra_pst=ra_pst,
                 ))
             structure = random.choice(list(NetworkType))
             if verbose:
-                print(f"{i}: structure={structure.name}, start={start_time}")
+                print(f"{len(processes)}: structure={structure.name}, start={start_time}")
             processes.append(
-                Process(network_type=structure, phases=phases,
+                Process(network_type=structure, phases=phases, 
                         start_time=start_time)
             )
-            i += 1
-        if i >= number_of_processes:
-            break
+        if len(processes) >= number_of_processes: break
 
     return processes, global_resource_ids
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
 
 
 def _active_phases(network_type: NetworkType) -> int:
@@ -124,6 +119,7 @@ def _schedule_phase(
     phase_end: List[int],
     phase_timelines: List[Dict],
 ) -> int:
+    """ Schedule a single phase of a process at the earliest start time. """
     preds = process.network_type.value[phase_index]
     task_start = (
         process.start_time if not preds else max(phase_end[p] for p in preds)
@@ -139,14 +135,13 @@ def _schedule_phase(
     return task_start
 
 
-# ---------------------------------------------------------------------------
-# Simulations
-# ---------------------------------------------------------------------------
-
-
 def simulate_extremal(
     processes: List[Process], max_phases: int
 ) -> List[List[PhaseTimeline]]:
+    """
+    Simulate the extremal resource demands of a list of processes. 
+    Schedule processes at the earliest start time. 
+    """
     timelines = []
     for resource in _collect_resource_indices(processes):
         phase_timelines = _make_phase_timelines(max_phases)
@@ -170,6 +165,7 @@ def simulate_extremal(
 def simulate_processes(
     processes: List[Process], max_phases: int
 ) -> List[PhaseTimeline]:
+    """ Simulate the scheduling of processes in a random mode. """
     phase_timelines = _make_phase_timelines(max_phases)
     for process in processes:
         modes = [
@@ -184,14 +180,10 @@ def simulate_processes(
     return [dict(sorted(tl.items())) for tl in phase_timelines]
 
 
-# ---------------------------------------------------------------------------
-# Demand computation
-# ---------------------------------------------------------------------------
-
-
 def compute_min_demands(
     processes: List[Process], max_phases: int
 ) -> List[Dict[int, int]]:
+    """ Compute the minimum resource demands of a list of processes. """
     min_demands = [defaultdict(int) for _ in range(max_phases)]
     for process in processes:
         for phase_id, phase_tasks in enumerate(process.tasks):
@@ -221,11 +213,6 @@ def get_extremal_demands(
                 for res, count in res_counts.items():
                     result[phase_id][res] = max(result[phase_id][res], count)
     return [dict(d) for d in result]
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 
 def get_min_max_demands(

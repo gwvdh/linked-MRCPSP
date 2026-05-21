@@ -37,7 +37,7 @@ DEFAULT_PARAMS: Dict[str, Any] = {
     "timeout": 600,
 }
 
-_MODEL_FNS = {
+MODEL_NAMES = {
     "PDT": pulse_model, 
     "PDDT": pulse_model_disaggregated,
     "SDT": step_model,
@@ -52,9 +52,9 @@ _PARAM_TYPES = {"batch_size": float}
 
 
 def model_selector(model: str, **kwargs):
-    if model not in _MODEL_FNS:
+    if model not in MODEL_NAMES:
         raise ValueError(f"Unknown model: {model!r}")
-    return _MODEL_FNS[model](**kwargs)
+    return MODEL_NAMES[model](**kwargs)
 
 
 def test_model(
@@ -148,9 +148,9 @@ def test_model(
         if solver in {"PDT", "PDDT", "OOPDT", "OOPDDT"}:
             visualize_pulse_model(**vis_kw, filename=f"Schedule_{scarcity}")
         elif solver == "OODDT":
-            visualize_onoff_model(**vis_kw, filename=f"Schedule_{scarcity}_onoff")
+            visualize_onoff_model(**vis_kw, filename=f"Schedule_onoff_{scarcity}")
         elif solver == "MSEQCT":
-            visualize_continuous_model(**vis_kw, filename=f"Schedule_{scarcity}_cont")
+            visualize_continuous_model(**vis_kw, filename=f"Schedule_cont_{scarcity}")
 
     db.add_solution(
         instance_id=db_instance_id, 
@@ -270,6 +270,23 @@ def cmd_run(args: argparse.Namespace) -> None:
     db.close()
 
 
+def cmd_run_all_unsolved(args: argparse.Namespace) -> None:
+    db = Database("database.db")
+    all_instance_ids = [r["id"] for r in db.get_instances()]
+    print(all_instance_ids)
+    for instance_id in all_instance_ids:
+        args.instance_id = instance_id
+        args.models = None
+        args.scarcities = None
+        n_processes = db.get_instance(instance_id)["number_of_processes"]
+        timeout = db.get_instance(instance_id)["timeout"]
+        print(f"Running instance {instance_id} ({n_processes} processes, timeout {timeout})")
+        if n_processes > 50:
+            print("Skipping (too many processes)")
+            continue
+        cmd_run(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Resource-constrained scheduling experiment runner"
@@ -310,6 +327,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.set_defaults(func=cmd_run)
 
+    run_all_unsolved = sub.add_parser(
+        "run-all", help="Solve all unsolved instances"
+    )
+    run_all_unsolved.add_argument("--objective", default="flow-time", choices=["makespan", "flow-time"])
+    run_all_unsolved.set_defaults(func=cmd_run_all_unsolved)
     return parser
 
 

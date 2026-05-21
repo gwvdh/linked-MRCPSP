@@ -31,8 +31,8 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     # Starting times
     earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
     latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
-    print(f"Earliest start times: {earliest_starting_times}")
-    print(f"Latest start times: {latest_starting_times}")
+    #print(f"Earliest start times: {earliest_starting_times}")
+    #print(f"Latest start times: {latest_starting_times}")
 
     # Initialize model
     model = gp.Model("pulse")
