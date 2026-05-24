@@ -26,7 +26,7 @@ SCARCITIES = [round(s * 0.1, 1) for s in range(11)]
 
 DEFAULT_PARAMS: Dict[str, Any] = {
     "number_of_processes": 2,
-    "arrival_rate": 0.5,
+    "arrival_rate": 0.3,
     "batch_size": 2,
     "max_phases": 3,
     "min_base_duration": 2.0,
@@ -287,6 +287,59 @@ def cmd_run_all_unsolved(args: argparse.Namespace) -> None:
         cmd_run(args)
 
 
+def cmd_run_all_unsolved_in_dataset(args: argparse.Namespace) -> None:
+    db = Database("database.db")
+    all_instance_ids = [r["id"] for r in db.get_dataset(args.dataset_id)]
+    print(f"Solving {len(all_instance_ids)} instances: {all_instance_ids}")
+    for instance_id in all_instance_ids:
+        args.instance_id = instance_id
+        args.models = None
+        args.scarcities = None
+        n_processes = db.get_instance(instance_id)["number_of_processes"]
+        timeout = db.get_instance(instance_id)["timeout"]
+        print(f"Running instance {instance_id} ({n_processes} processes, timeout {timeout})")
+        if n_processes > 50:
+            print("Skipping (too many processes)")
+            continue
+        cmd_run(args)
+
+
+def cmd_create_dataset(args: argparse.Namespace) -> None:
+    params = {k: getattr(args, k) for k in DEFAULT_PARAMS}
+    xml_files = (
+        [e.split(",") if "," in e else e for e in args.xml_files]
+        if getattr(args, "xml_files", None) is not None else None
+    )
+    gen_params = {k: v for k, v in params.items() if k != "timeout"}
+
+    db = Database("database.db")
+    db.add_dataset(
+        name=args.name,
+        description=args.description,
+        n_processes=args.number_of_processes,
+        n_instances=args.n_instances,
+    )
+    dataset_id = db.get_datasets()[-1]["id"]
+    for i in range(args.n_instances):
+        processes, global_resource_ids = generate_instance(xml_files=xml_files, **gen_params)
+        n_resources = len(global_resource_ids)
+        # create instance
+        db_instance_id = db.add_instance(**params, n_resources=n_resources, processes_file="")
+
+        data_dir = f"data/{db_instance_id}"
+        os.makedirs(data_dir, exist_ok=True)
+        processes_file = f"{data_dir}/processes.pkl"
+        with open(processes_file, "wb") as f:
+            pickle.dump((processes, global_resource_ids), f)
+
+        db.update_instance_processes_file(db_instance_id, processes_file)
+        print(f"Instance {db_instance_id} created")
+        # add instance to dataset
+        db.add_instance_to_dataset(db_instance_id, dataset_id)
+    print(f"Dataset {dataset_id} created")
+    db.close()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Resource-constrained scheduling experiment runner"
@@ -332,6 +385,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_all_unsolved.add_argument("--objective", default="flow-time", choices=["makespan", "flow-time"])
     run_all_unsolved.set_defaults(func=cmd_run_all_unsolved)
+
+    run_dataset = sub.add_parser(
+        "run-all-in-dataset", help="Solve all unsolved instances in a dataset"
+    )
+    run_dataset.add_argument("dataset_id", type=int, help="DB dataset ID returned by 'generate'")
+    run_dataset.add_argument("--objective", default="flow-time", choices=["makespan", "flow-time"])
+    run_dataset.set_defaults(func=cmd_run_all_unsolved_in_dataset)
+    create_dataset = sub.add_parser(
+        "create-dataset", help="Create a full dataset"
+    )
+    create_dataset.add_argument("name", type=str, help="Dataset name")
+    create_dataset.add_argument("--description", type=str, default="", help="Dataset description")
+    for k, v in DEFAULT_PARAMS.items():
+        create_dataset.add_argument(
+            f"--{k.replace('_', '-')}",
+            type=_PARAM_TYPES.get(k, type(v)),
+            default=v,
+        )
+    create_dataset.add_argument("--n_instances", type=int, default="10", help="Number of instances")
+    create_dataset.add_argument(
+        "--xml-files", nargs="+", default=None, dest="xml_files",
+        metavar="FILE[,FILE…]",
+        help=(
+            "RA-PST XML file(s) per phase. Each argument corresponds to one phase "
+            "(cycled if fewer than --max-phases are given). Use a comma-separated "
+            "list to define a per-process pool for that phase, e.g.: "
+            "--xml-files phase0.xml \"phase1a.xml,phase1b.xml\""
+        ),
+    )
+    create_dataset.set_defaults(func=cmd_create_dataset)
     return parser
 
 

@@ -43,6 +43,28 @@ class Database:
             )
             """
         )
+        self.cursor.execute(
+            """
+                CREATE TABLE IF NOT EXISTS datasets (
+                    id            INTEGER PRIMARY KEY,
+                    name          TEXT,
+                    description   TEXT,
+                    n_processes   INTEGER,
+                    n_instances   INTEGER
+                )
+            """
+        )
+        self.cursor.execute(
+            """
+                CREATE TABLE IF NOT EXISTS instance_dataset (
+                    id            INTEGER PRIMARY KEY,
+                    instance_id   INTEGER,
+                    dataset_id    INTEGER,
+                    FOREIGN KEY (instance_id) REFERENCES instances (id),
+                    FOREIGN KEY (dataset_id) REFERENCES datasets (id)
+                )
+            """
+        )
         self.conn.commit()
 
     def __enter__(self):
@@ -234,3 +256,75 @@ class Database:
             "SELECT * FROM solution WHERE instance_id = ?", (instance_id,)
         )
         return self.cursor.fetchall()
+
+    def get_datasets(self) -> list[sqlite3.Row]:
+        self.cursor.execute("SELECT * FROM datasets")
+        return self.cursor.fetchall()
+
+    def get_dataset(self, id: int) -> list[sqlite3.Row]:
+        self.cursor.execute("SELECT * FROM instances INNER JOIN instance_dataset ON instances.id = instance_dataset.instance_id WHERE instance_dataset.dataset_id = ?", (id,))
+        return self.cursor.fetchall()
+
+    def add_dataset(self, name: str, description: str, n_processes: int, n_instances: int) -> int:
+        self.cursor.execute(
+            """
+            INSERT INTO datasets (
+                name,
+                description,
+                n_processes,
+                n_instances
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (name, description, n_processes, n_instances),
+        )
+        self.conn.commit()
+        return self.cursor.lastrowid
+
+    def add_instance_to_dataset(self, instance_id: int, dataset_id: int) -> None:
+        # Check if the connection exists
+        self.cursor.execute("SELECT * FROM instance_dataset WHERE instance_id = ? AND dataset_id = ?", (instance_id, dataset_id))
+        if self.cursor.fetchone() is not None:
+            raise ValueError(f"Instance {instance_id} already in dataset {dataset_id}")
+        # Check if the instance exists
+        self.cursor.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+        dataset = self.cursor.fetchone()
+        if dataset is None:
+            raise ValueError(f"Dataset {dataset_id} not found")
+        number_of_required_processes = dataset["n_processes"]
+
+        self.cursor.execute("SELECT * FROM instances WHERE id = ?", (instance_id,))
+        instance = self.cursor.fetchone()
+        if instance is None:
+            raise ValueError(f"Instance {instance_id} not found")
+        if instance["number_of_processes"] != number_of_required_processes:
+            raise ValueError(f"Instance {instance_id} has {instance['number_of_processes']} processes, but dataset {dataset_id} requires {number_of_required_processes} processes")
+        self.cursor.execute(
+            "INSERT INTO instance_dataset (instance_id, dataset_id) VALUES (?, ?)",
+            (instance_id, dataset_id),
+        )
+        self.conn.commit()
+
+    def get_all_instance_to_dataset(self) -> list[sqlite3.Row]:
+        self.cursor.execute(
+            "SELECT * FROM instance_dataset"
+        )
+        return self.cursor.fetchall()
+
+
+
+if __name__ == "__main__":
+    _db = Database("database.db")
+    print([dict(row) for row in _db.get_instances()])
+    print([dict(row) for row in _db.get_datasets()])
+    print([dict(row) for row in _db.get_dataset(1)])
+
+    _instances = _db.get_instances()
+    _instance_id = 13
+    print(f"Instance {_instances[_instance_id]['id']}: {_instances[_instance_id]['number_of_processes']} processes")
+    _db.add_instance_to_dataset(_instance_id, 1)
+    # after
+    print([dict(row) for row in _db.get_datasets()])
+    print([dict(row) for row in _db.get_dataset(1)])
+    print([dict(row) for row in _db.get_all_instance_to_dataset()])
+    _db.close()
