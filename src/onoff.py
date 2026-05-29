@@ -3,9 +3,9 @@ from gurobipy import GRB
 import json
 from math import gcd
 import time
-from .utils import get_earliest_start_time, get_latest_start_time
+from .utils import normalize
 
-def onoff_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
+def onoff_model(n, T, M, R, E, p, L, r, O, VP, ES=None, LS=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -17,19 +17,14 @@ def onoff_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
     O: List of last jobs indices of each process
     ES: Earliest start time for each activity i
+    LS: Latest start time for each activity i
     """
     # Normalize processing times
-    unique_processing_times = list(set([i for job in p for i in job]))
-    unique_processing_times.append(T)
-    divisor = gcd(*unique_processing_times)
-    for i in range(len(p)):
-        for j in range(len(p[i])):
-            p[i][j] = p[i][j] // divisor
-    T = T // divisor
+    p, T, divisor = normalize(p, T)
 
     # Starting times
-    earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
-    latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
+    #earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
+    #latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
 
     # Initialize model
     model = gp.Model("onoff")
@@ -47,12 +42,12 @@ def onoff_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     elif obj == "flow-time":
         model.setObjective(gp.quicksum(
             gp.quicksum(gp.quicksum(y[i, m, t] * t for t in range(T))/max(p[i][m], 1) + gp.quicksum(y[i, m, t] for t in range(T))/max(p[i][m], 1) * ((p[i][m]/2.0) + (0.5 if p[i][m] > 0 else 0)) for m in range(M[i]))
-        - earliest_starting_times[i] for i in range(n)), GRB.MINIMIZE)
+        - ES[i] for i in range(n)), GRB.MINIMIZE)
     elif obj == "process-flow-time":
         # Rounding the addition down for odd length, rounding down the timeslot for even length
         model.setObjective(gp.quicksum(
             gp.quicksum(gp.quicksum(y[i, m, t] * t for t in range(T))/max(p[i][m], 1) + gp.quicksum(y[i, m, t] for t in range(T))/max(p[i][m], 1) * ((p[i][m]/2.0) + (0.5 if p[i][m] > 0 else 0)) for m in range(M[i]))
-        - earliest_starting_times[i] for i in O), GRB.MINIMIZE)
+        - ES[i] for i in O), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once (schedule dummy separately, since p[n-1][m] = 0)
@@ -72,8 +67,8 @@ def onoff_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     model.addConstrs((gp.quicksum(y[i, m, t] for t in range(T))/max(p[i][m],1) == gp.quicksum(y[j, m, t] for t in range(T))/max(p[j][m],1) for i,j in L for m in range(M[i])), name="linked")
     
     # Zero time slots 
-    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(earliest_starting_times[i])), name="zero_time_slots")
-    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(latest_starting_times[i]+p[i][m]+1, T)), name="zero_time_slots")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(ES[i])), name="zero_time_slots")
+    model.addConstrs((y[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(LS[i]+p[i][m]+1, T)), name="zero_time_slots")
     
     return model, divisor
 

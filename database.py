@@ -1,4 +1,6 @@
 import sqlite3
+import json
+from gurobipy import GRB
 
 
 class Database:
@@ -257,6 +259,32 @@ class Database:
         )
         return self.cursor.fetchall()
 
+    def create_pending_solution(
+        self, instance_id: int, solver: str, scarcity: float, objective:str
+    ) -> int:
+        self.cursor.execute(
+            """
+            INSERT INTO solution (instance_id, solver, scarcity, objective, solved)
+            VALUES (?, ?, ?, ?, 0)
+            """,
+            (instance_id, solver, scarcity, objective),
+        )
+        self.conn.commit()
+        return self.cursor.lastrowid
+
+    def get_unsolved_solutions_for_dataset(
+        self, dataset_id: int
+    ) -> list[sqlite3.Row]:
+        self.cursor.execute(
+            """
+            SELECT solution.* FROM solution
+            INNER JOIN instance_dataset ON solution.instance_id = instance_dataset.instance_id
+            WHERE instance_dataset.dataset_id = ? AND NOT solution.solved
+            """,
+            (dataset_id,),
+        )
+        return self.cursor.fetchall()
+
     def get_datasets(self) -> list[sqlite3.Row]:
         self.cursor.execute("SELECT * FROM datasets")
         return self.cursor.fetchall()
@@ -310,6 +338,101 @@ class Database:
             "SELECT * FROM instance_dataset"
         )
         return self.cursor.fetchall()
+
+    def _latex_table_header(
+        self, caption: str, label: str, descriptor: str, scarcities: list[float]
+    ) -> str:
+        columns = "c|" * len(scarcities)
+        scarcity_row = " & ".join(f"{s:.1f}" for s in scarcities)
+        return (
+            "\\begin{table}[ht]\n\\centering\n"
+            f"\\caption{{{caption} ({descriptor}). "
+            "An entry with - indicates an infeasible instance.}}\n"
+            f"\\label{{{label}}}\n"
+            f"\\begin{{tabular}}{{|l|{columns}}}\n"
+            f"\\hline\n\\(RS\\) & {scarcity_row} \\\\ \\hline\n"
+        )
+
+    def _solution_info(self, sol_file: str | None) -> dict | None:
+        if not sol_file:
+            return None
+        with open(sol_file, "r") as f:
+            return json.load(f)["SolutionInfo"]
+
+    def make_latex_tables(
+        self, instance_id: int, models: list[str], scarcities: list[float]
+    ) -> tuple[str, str]:
+        """Make a table of objective and runtime for a given instance and models."""
+        n_proc = self.get_instance(instance_id)["number_of_processes"]
+        footer = "\\end{tabular}\n\\end{table}\n"
+        objective = self._latex_table_header(
+                "", "tab:makespan", f"{n_proc} processes", scarcities
+            )
+        runtime = self._latex_table_header(
+                "Runtime", "tab:runtime", f"{n_proc} processes", scarcities
+            )
+        for model_name in models:
+            objective_row = runtime_row = model_name
+            for scarcity in scarcities:
+                sol = self.get_solution(instance_id, model_name, scarcity)
+                info = self._solution_info(sol["sol_file"])
+                if info is None:
+                    objective_row += " & ?"; runtime_row += " & ?"
+                    continue
+                status, sol_count = info["Status"], info["SolCount"]
+                if status == GRB.INFEASIBLE or (sol_count == 0 and status == GRB.TIME_LIMIT):
+                    objective_row += " & -"; runtime_row += " & -"
+                else:
+                    obj = int(info["ObjVal"])
+                    cell = f"\\textbf{{{obj}}}" if status == GRB.OPTIMAL else str(obj)
+                    objective_row += f" & {cell}"; runtime_row += f" & {info['Runtime']:.1f}s"
+            objective += objective_row + " \\\\ \\hline\n"
+            runtime += runtime_row + " \\\\ \\hline\n"
+        return objective + footer, runtime + footer
+
+    def make_dataset_latex_tables(
+        self, dataset_id: int, models: list[str], scarcities: list[float]
+    ) -> tuple[str, str]:
+        """Make a table of objective and runtime for all instances in a dataset."""
+        self.cursor.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+        dataset = self.cursor.fetchone()
+        if dataset is None:
+            raise ValueError(f"Dataset {dataset_id} not found")
+        descriptor = f"{dataset['n_processes']} processes, {dataset['n_instances']} instances"
+        instance_ids = [row["id"] for row in self.get_dataset(dataset_id)]
+        footer = "\\end{tabular}\n\\end{table}\n"
+        objective = self._latex_table_header(
+            "", "tab:makespan", descriptor, scarcities
+        )
+        runtime = self._latex_table_header(
+            "Mean runtime (s)", "tab:runtime", descriptor, scarcities
+        )
+        for model_name in models:
+            objective_row = runtime_row = model_name
+            for scarcity in scarcities:
+                obj_vals: list[float] = []
+                runtimes: list[float] = []
+                n_missing = 0
+                for iid in instance_ids:
+                    sol = self.get_solution(iid, model_name, scarcity)
+                    info = self._solution_info(sol["sol_file"] if sol else None)
+                    if info is None:
+                        n_missing += 1
+                        continue
+                    status, sol_count = info["Status"], info["SolCount"]
+                    if not (status == GRB.INFEASIBLE or (sol_count == 0 and status == GRB.TIME_LIMIT)):
+                        obj_vals.append(int(info["ObjVal"]))
+                        runtimes.append(info["Runtime"])
+                if n_missing == len(instance_ids):
+                    objective_row += " & ?"; runtime_row += " & ?"
+                elif not obj_vals:
+                    objective_row += " & -"; runtime_row += " & -"
+                else:
+                    objective_row += f" & {sum(obj_vals) / len(obj_vals):.0f}"
+                    runtime_row += f" & {sum(runtimes) / len(runtimes):.1f}"
+            objective += objective_row + " \\\\ \\hline\n"
+            runtime += runtime_row + " \\\\ \\hline\n"
+        return objective + footer, runtime + footer
 
 
 

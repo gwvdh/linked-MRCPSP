@@ -1,10 +1,60 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
+from collections import defaultdict
+import random
+import numpy as np
 
-from .generator import get_capacity
+from .generator import get_capacity, _make_phase_timelines, _active_phases
 from .definitions import Process, NetworkType
 from .xml_parser import RA_PST
+
+
+def greedy_schedule(
+    processes: List[Process],
+    max_phases: int,
+    capacities: List[int, int],
+) -> tuple[List[PhaseTimeline], int]:
+    """ Schedule processes greedily, starting with the earliest start time. """
+    phase_timelines = _make_phase_timelines(max_phases)
+    resource_usage: Dict[int, Dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    upper_bound = sum(process.max_processing_time() for process in processes)
+    makespan = 0
+    for process in processes:
+        modes = [
+            random.randrange(process.phases[i].number_of_modes)
+            for i in range(len(process.phases))
+        ]
+        phase_end: List[int] = []
+        for i in range(_active_phases(process.network_type)):
+            predecessors = process.network_type.value[i]
+            t = process.start_time if not predecessors else max(phase_end[p] for p in predecessors)
+            for task in process.tasks[i]:
+                if task is None: continue
+                dur, res = task.duration[modes[i]], task.resource[modes[i]]
+                if res is not None:
+                    cap = capacities.get(res, float("inf"))
+                    while any(resource_usage[t + dt][res] >= cap for dt in range(dur)):
+                        t += 1
+                        if t > upper_bound: break
+                    for dt in range(dur):
+                        resource_usage[t + dt][res] += 1
+                        phase_timelines[i][t + dt][res] += 1
+                t += dur
+            phase_end.append(t)
+        if phase_end: 
+            makespan = max(makespan, max(phase_end))
+    return [dict(sorted(tl.items())) for tl in phase_timelines], makespan
+
+
+def get_max_T(processes: List[Process], max_phases: int, capacities: Dict[int, int], k: int = 10) -> int:
+    """ Return the minimum makespan over k greedy schedules. """
+    max_T = float("inf")
+    for _ in range(k):
+        _, makespan = greedy_schedule(processes, max_phases, capacities)
+        max_T = min(max_T, makespan+1)
+    print(f"Max T = {max_T}")
+    return max_T
 
 
 def get_or_instance(
@@ -31,6 +81,8 @@ def get_or_instance(
     R: List[int] = [get_capacity(mn, mx, scarcity) for mn, mx in min_max]
     print(f"Capacities: {R}")
     total_resources = n_resources
+
+    max_start_time = get_max_T(processes, max_phases, {r: R[r] for r in range(n_resources)}, k=100)
 
     def _zero_p(n_modes: int) -> List[int]:
         return [0] * n_modes
@@ -116,6 +168,19 @@ def get_or_instance(
                 adj[i] |= adj[k]
     TE = [[i, j] for i in range(n) for j in adj[i]]
 
+    # Earliest start times
+    for i in range(n):
+        for k in range(n):
+            if i in adj[k]:
+                ES[i] = max(ES[i], ES[k] + min(p[k]))
+
+    # Latest start times
+    LS = [int(max_start_time)-1] * n
+    for i in range(n-1, -1, -1):
+        for k in range(n):
+            if k in adj[i]:
+                LS[i] = min(LS[i], LS[k] - min(p[i]))
+
     e_set = {(a, b) for a, b in TE} | {(b, a) for a, b in TE}
     VP = [
         [i, j]
@@ -135,5 +200,6 @@ def get_or_instance(
         "r": r,
         "O": O,
         "ES": ES,
+        "LS": LS,
         "VP": VP,
     }

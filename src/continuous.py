@@ -3,9 +3,9 @@ from gurobipy import GRB
 import json
 from math import gcd
 import time
-from .utils import get_earliest_start_time, get_latest_start_time
+from .utils import normalize
 
-def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="makespan", timeout=600):
+def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, LS=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -18,20 +18,14 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
     O: List of last jobs indices of each process
     ES: Earliest start time for each activity i
+    LS: Latest start time for each activity i
     """
     # Normalize processing times
-    unique_processing_times = list(set([i for job in p for i in job]))
-    unique_processing_times.append(T)
-    divisor = gcd(*unique_processing_times)
-    #divisor = 1
-    for i in range(len(p)):
-        for j in range(len(p[i])):
-            p[i][j] = p[i][j] // divisor
-    T = T // divisor
+    p, T, divisor = normalize(p, T)
 
     # Starting times
-    earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
-    latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
+    #earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
+    #latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
 
     # Initialize model
     model = gp.Model("continuous")
@@ -41,8 +35,8 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
 
     # Activity variables
     S = model.addVars(n, vtype=GRB.INTEGER, name="activity")
-    model.addConstrs((S[i] >= earliest_starting_times[i] for i in range(n)), name="earliest_starting_times")
-    model.addConstrs((S[i] <= latest_starting_times[i] for i in range(n)), name="latest_starting_times")
+    model.addConstrs((S[i] >= ES[i] for i in range(n)), name="earliest_starting_times")
+    model.addConstrs((S[i] <= LS[i] for i in range(n)), name="latest_starting_times")
     activity_mode_sets = [(i, m) for i in range(n) for m in range(M[i])]
     x = model.addVars(activity_mode_sets, vtype=GRB.BINARY, name="mode")
     pair_sets = [(i, j) for i, j in VP]
@@ -57,9 +51,9 @@ def continuous_model(n, T, M, R, E, VP, p, L, r, O, ES=None, silent=True, obj="m
     if obj == "makespan":
         model.setObjective(S[n-1], GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum(S[i] - earliest_starting_times[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M[i])) for i in range(n)), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(S[i] - ES[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M[i])) for i in range(n)), GRB.MINIMIZE)
     elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum(S[i] - earliest_starting_times[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M[i])) for i in O), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(S[i] - ES[i] + gp.quicksum(p[i][m] * x[i, m] for m in range(M[i])) for i in O), GRB.MINIMIZE)
 
     # Constraints
     # Connect the start-time variables with the completion-start sequencing variables

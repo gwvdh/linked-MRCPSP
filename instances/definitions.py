@@ -18,9 +18,6 @@ class NetworkType(Enum):
     TRIPLE = ((), (0,), (1,))
     INTREE = ((), (), (0, 1))
 
-    def as_lists(self) -> list[list[int]]:
-        return [list(pred) for pred in self.value]
-
 
 @dataclass
 class Task:
@@ -141,7 +138,7 @@ class Process:
                     )
 
                     if variance > 0.0:
-                        duration *= np.random.normal(1.0, variance)
+                        duration = max(1, duration*np.random.normal(1.0, variance))
 
                     durations.append(int(duration))
                     resources.append(phase.ra_pst.get_resource(j, m))

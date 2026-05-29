@@ -56,3 +56,8 @@ def get_latest_start_time(n, T, M, R, E, p, L, r, VP):
                 latest_starting_times[i] = min(latest_starting_times[i], latest_starting_times[succ] - max_p)
     return latest_starting_times
 
+
+def normalize(p: list[list[int]], T: int) -> tuple[list[list[int]], int, int]:
+    """ Normalize the processing times. returns (noramlized p, normalized T, divisor) """
+    d = gcd(*{v for job in p for v in job}, T)
+    return [[v // d for v in job] for job in p], T // d, d

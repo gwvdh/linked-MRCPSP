@@ -28,7 +28,7 @@ _FEATURES = [
     "schedule_density",
     "duration_flexibility",
     "VP_mean",
-    #"scarcity",
+    "scarcity",
 ]
 
 
@@ -61,11 +61,11 @@ def _read_sol(db: Database, iid: int, model: str, scarcity: float):
     try:
         with open(sol["sol_file"], "r") as f:
             info = json.load(f)["SolutionInfo"]
-    except (FileNotFoundError, KeyError):
+    except (FileNotFoundError, KeyError, TypeError):
         return None, None
     if info["SolCount"] == 0:
         return None, None
-    return info["ObjVal"] * sol["divisor"], info["Runtime"]
+    return info["ObjVal"] * sol["divisor"], int(info["Runtime"])
 
 
 def plot_objective_heatmap(
@@ -170,7 +170,8 @@ def get_VP_mean(db: Database, instance_ids: list[int] | None = None) -> dict[int
     VP_mean = {}
     for iid in instance_ids:
         row = db.get_instance(iid)
-        instance_file = db.get_solution(iid, "PDT", 0.0)["instance_file"]
+        sol = db.get_solutions(iid)
+        instance_file = sol[0]["instance_file"]
         # Load solution json file
         with open(instance_file, "r") as f:
             instance = json.load(f)
@@ -237,8 +238,10 @@ def plot_instance_space_scarcities(
                 obj, t = _read_sol(db, iid, m, s)
                 if t is None: 
                     t = db.get_instance(iid)["timeout"]
-                scores[m] = t
-            best.append(min(scores, key=scores.get) if scores else "N/A")
+                scores[m] = (t, obj)
+            best.append(min(scores, 
+                            key=lambda m: (scores[m][0], scores[m][1] if scores[m][1] is not None else float("inf")),
+                            ) if scores else "N/A")
 
     solvers = sorted(set(best))
     cmap    = plt.colormaps["tab10"]
@@ -255,7 +258,8 @@ def plot_instance_space_scarcities(
         #    db.get_solution(iid, solver, scarcity)["objective_val"],
         #    sep="\t"
         #    )
-        if db.get_solution(iid, solver, scarcity)["objective_val"] is None: continue
+        sol = db.get_solution(iid, solver, scarcity)
+        if sol is None or sol["objective_val"] is None: continue
         ax.scatter(x, y, color=colors[solver], s=80, zorder=3)
         ax.annotate(f"{iid} ({scarcity})", (x, y), xytext=(5, 5),
                     textcoords="offset points", fontsize=8)
@@ -343,7 +347,9 @@ def plot_instance_space(
                 vals.append(t)
             if vals:
                 scores[m] = np.mean(vals)
-        best.append(min(scores, key=scores.get) if scores else "N/A")
+        best.append(min(scores, 
+                        key=lambda m: (scores[m][0], scores[m][1] if scores[m][1] is not None else float("inf")),
+                        ) if scores else "N/A")
 
     solvers = sorted(set(best))
     cmap    = plt.colormaps["tab10"]
@@ -403,5 +409,7 @@ def arg_parser():
 if __name__ == "__main__":
     db = Database("database.db")
     args = arg_parser().parse_args()
-    default_instance_ids = [1, 2, 3, 4, 5, 6, 7, 13, 14, 15, 16, 17, 18, 19]
+    # Get all instance ids in database
+    default_instance_ids = [row["id"] for row in db.get_instances()]
+    #default_instance_ids = [i for i in range(1, 60)]
     args.func(db, instance_ids=args.instance_ids or default_instance_ids, filename=args.filename)

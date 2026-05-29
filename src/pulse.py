@@ -3,9 +3,9 @@ from gurobipy import GRB
 import json
 from math import gcd
 import time
-from .utils import get_earliest_start_time, get_latest_start_time
+from .utils import normalize
 
-def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
+def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, LS=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -17,20 +17,15 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
     O: List of last jobs indices of each process 
     ES: Earliest start time for each activity i
+    LS: Latest start time for each activity i
     obj: objective function, either "makespan" or "flow-time"
     """
     # Normalize processing times
-    unique_processing_times = list(set([i for job in p for i in job]))
-    unique_processing_times.append(T)
-    divisor = gcd(*unique_processing_times)
-    for i in range(len(p)):
-        for j in range(len(p[i])):
-            p[i][j] = p[i][j] // divisor
-    T = T // divisor
+    p, T, divisor = normalize(p, T)
 
     # Starting times
-    earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
-    latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
+    #earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
+    #latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
     #print(f"Earliest start times: {earliest_starting_times}")
     #print(f"Latest start times: {latest_starting_times}")
 
@@ -42,7 +37,7 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
 
     # Pulse variables
     x_t = {
-        i: range(earliest_starting_times[i], min(latest_starting_times[i] + 1, T))
+        i: range(ES[i], min(LS[i] + 1, T))
         for i in range(n)
     }
     pulse_sets = [(i, m, t) for i in range(n) for m in range(M[i]) for t in x_t[i]]
@@ -52,9 +47,9 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in x_t[n-1] for m in range(M[n-1])), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for i in range(n) for m in range(M[i]) for t in x_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - ES[i]) for i in range(n) for m in range(M[i]) for t in x_t[i]), GRB.MINIMIZE)
     elif obj == "process_flow_time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for i in O for m in range(M[i]) for t in x_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - ES[i]) for i in O for m in range(M[i]) for t in x_t[i]), GRB.MINIMIZE)
 
     # Constraints
     # Schedule job exactly once
@@ -73,8 +68,8 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
             for i in range(n) 
             for m in range(M[i]) 
             for tau in range(
-                max(t-p[i][m]+1, earliest_starting_times[i]), 
-                min(t, latest_starting_times[i])+1
+                max(t-p[i][m]+1, ES[i]), 
+                min(t, LS[i])+1
             )
         ) <= R[k] 
         for t in range(T) for 
@@ -89,7 +84,7 @@ def pulse_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makesp
     
     return model, divisor
 
-def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
+def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, LS=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -101,19 +96,14 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=Tru
     r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
     O: List of last jobs indices of each process 
     ES: Earliest start time for each activity i
+    LS: Latest start time for each activity i
     """
     # Normalize processing times
-    unique_processing_times = list(set([i for job in p for i in job]))
-    unique_processing_times.append(T)
-    divisor = gcd(*unique_processing_times)
-    for i in range(len(p)):
-        for j in range(len(p[i])):
-            p[i][j] = p[i][j] // divisor
-    T = T // divisor
+    p, T, divisor = normalize(p, T)
 
     # Starting times
-    earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
-    latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
+    #earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
+    #latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
 
     # Initialize model
     model = gp.Model("pulse_disaggregated")
@@ -123,7 +113,7 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=Tru
 
     # Pulse variables
     x_t = {
-        i: range(earliest_starting_times[i], min(latest_starting_times[i] + 1, T))
+        i: range(ES[i], min(LS[i] + 1, T))
         for i in range(n)
     }
     pulse_sets = [(i, m, t) for i in range(n) for m in range(M[i]) for t in x_t[i]]
@@ -133,9 +123,9 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=Tru
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * x[n-1, m, t] for t in range(T) for m in range(M[n-1])), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for i in range(n) for m in range(M[i]) for t in x_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - ES[i]) for i in range(n) for m in range(M[i]) for t in x_t[i]), GRB.MINIMIZE)
     elif obj == "process_flow_time":
-        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - earliest_starting_times[i]) for i in O for m in range(M[i]) for t in x_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum(x[i, m, t] * (t + p[i][m] - ES[i]) for i in O for m in range(M[i]) for t in x_t[i]), GRB.MINIMIZE)
 
     # Constraints
     # Schedule job exactly once
@@ -144,10 +134,10 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=Tru
     # Precedence relations between jobs (i,j)
     model.addConstrs((
         gp.quicksum(x[i, m, tau] for m in range(M[i]) for tau in range(
-            earliest_starting_times[i],
-            min(latest_starting_times[i], t-p[i][m])+1
+            ES[i],
+            min(LS[i], t-p[i][m])+1
         )) >=
-        gp.quicksum(x[j, m, tau] for m in range(M[j]) for tau in range(earliest_starting_times[j], min(latest_starting_times[j], t)+1))
+        gp.quicksum(x[j, m, tau] for m in range(M[j]) for tau in range(ES[j], min(LS[j], t)+1))
         for i,j in E for t in range(T)), 
         name="precedence")
 
@@ -157,8 +147,8 @@ def pulse_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=Tru
             for i in range(n) 
             for m in range(M[i]) 
             for tau in range(
-                max(t-p[i][m]+1, earliest_starting_times[i]), 
-                min(t+1, latest_starting_times[i]+1)
+                max(t-p[i][m]+1, ES[i]), 
+                min(t+1, LS[i]+1)
             )
         ) <= R[k] 
         for t in range(T) for 

@@ -3,9 +3,9 @@ from gurobipy import GRB
 import json
 from math import gcd
 import time
-from .utils import get_earliest_start_time, get_latest_start_time
+from .utils import normalize
 
-def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
+def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, LS=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -17,19 +17,14 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
     O: List of last jobs indices of each process
     ES: Earliest start time for each activity i
+    LS: Latest start time for each activity i
     """
     # Normalize processing times
-    unique_processing_times = list(set([i for job in p for i in job]))
-    unique_processing_times.append(T)
-    divisor = gcd(*unique_processing_times)
-    for i in range(len(p)):
-        for j in range(len(p[i])):
-            p[i][j] = p[i][j] // divisor
-    T = T // divisor
+    p, T, divisor = normalize(p, T)
 
     # Starting times
-    earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
-    latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
+    #earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
+    #latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
 
     # Initialize model
     model = gp.Model("step")
@@ -39,7 +34,7 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
 
     # Step variables
     z_t = {
-        i: range(earliest_starting_times[i], min(latest_starting_times[i] + 1, T))
+        i: range(ES[i], min(LS[i] + 1, T))
         for i in range(n)
     }
     step_sets = [(i, m, t) for i in range(n) for m in range(M[i]) for t in range(T)]
@@ -49,13 +44,13 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M[n-1])), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for i in range(n) for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - ES[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - ES[i]) for i in range(n) for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
     elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - earliest_starting_times[i]) for i in O for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - ES[i]) for i in O for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once
-    model.addConstrs((gp.quicksum(z[i, m, latest_starting_times[i]] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
+    model.addConstrs((gp.quicksum(z[i, m, LS[i]] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
     model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
 
     # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
@@ -76,11 +71,11 @@ def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespa
     model.addConstrs((z[i, m, T-1] == z[j, m, T-1] for i,j in L for m in range(M[i])), name="linked")
     
     # Earliest start times
-    model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(earliest_starting_times[i])), name="earliest_start_times")
+    model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(ES[i])), name="earliest_start_times")
     
     return model, divisor
 
-def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True, obj="makespan", timeout=600):
+def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, LS=None, silent=True, obj="makespan", timeout=600):
     """
     n: number of activities
     T: number of time slots 1,...,T
@@ -92,19 +87,14 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
     O: List of last jobs indices of each process
     ES: Earliest start time for each activity i
+    LS: Latest start time for each activity i
     """
     # Normalize processing times
-    unique_processing_times = list(set([i for job in p for i in job]))
-    unique_processing_times.append(T)
-    divisor = gcd(*unique_processing_times)
-    for i in range(len(p)):
-        for j in range(len(p[i])):
-            p[i][j] = p[i][j] // divisor
-    T = T // divisor
+    p, T, divisor = normalize(p, T)
 
     # Starting times
-    earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
-    latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
+    #earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
+    #latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
 
     # Initialize model
     model = gp.Model("step_disaggregated")
@@ -114,7 +104,7 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
 
     # Step variables
     z_t = {
-        i: range(earliest_starting_times[i], min(latest_starting_times[i] + 1, T))
+        i: range(ES[i], min(LS[i] + 1, T))
         for i in range(n)
     }
     step_sets = [(i, m, t) for i in range(n) for m in range(M[i]) for t in range(T)]
@@ -124,13 +114,13 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     if obj == "makespan":
         model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M[n-1])), GRB.MINIMIZE)
     elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - earliest_starting_times[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - earliest_starting_times[i]) for i in range(n) for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - ES[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - ES[i]) for i in range(n) for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
     elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - earliest_starting_times[i]) for i in O for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
+        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - ES[i]) for i in O for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
 
     # Constraints
     # Schedule each job exactly once
-    model.addConstrs((gp.quicksum(z[i, m, latest_starting_times[i]] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
+    model.addConstrs((gp.quicksum(z[i, m, LS[i]] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
     model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
 
     # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
@@ -150,7 +140,7 @@ def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, silent=True
     model.addConstrs((z[i, m, T-1] == z[j, m, T-1] for i,j in L for m in range(M[i])), name="linked")
     
     # Earliest start times
-    model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(earliest_starting_times[i])), name="earliest_start_times")
+    model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(ES[i])), name="earliest_start_times")
     
     return model, divisor
 
