@@ -5,488 +5,622 @@ import json
 import os
 import pickle
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable
 
 from gurobipy import GRB
-from instances.generator import generate_instance, get_min_max_demands
+
+from database import Database
 from instances.definitions import Process
+from instances.generator import generate_instance, get_min_max_demands
 from instances.or_instance import get_or_instance
-from src.pulse import pulse_model, pulse_model_disaggregated
-from src.step import step_model, step_model_disaggregated
+from param import ARG_TYPES, DEFAULT_PARAMS, MODELS, SCARCITIES
+from src.continuous import continuous_model
 from src.onoff import onoff_model
 from src.onoff_pulse import onoff_pulse_model, onoff_pulse_model_disaggregated
-from src.continuous import continuous_model
+from src.pulse import pulse_model, pulse_model_disaggregated
+from src.step import step_model, step_model_disaggregated
 from src.vis_schedule import (
-    visualize_pulse_model, visualize_continuous_model, visualize_onoff_model,
+    visualize_continuous_model,
+    visualize_onoff_model,
+    visualize_pulse_model,
 )
-from database import Database
 
-MODELS = ["PDT", "PDDT", "SDT", "SDDT", "OODDT", "OOPDT", "OOPDDT", "MSEQCT"]
-SCARCITIES = [round(s * 0.1, 1) for s in range(2, 11)]
-
-DEFAULT_PARAMS: Dict[str, Any] = {
-    "number_of_processes": 2,
-    "arrival_rate": 0.3,
-    "batch_size": 2,
-    "max_phases": 3,
-    "min_base_duration": 2.0,
-    "max_base_duration": 5.0,
-    "min_resource_ratio": 0.6,
-    "resource_ratio_center": 1.5,
-    "resource_ratio_spread": 1.0,
-    "timeout": 600,
-}
-
-MODEL_NAMES = {
-    "PDT": pulse_model, 
+MODEL_BUILDERS: dict[str, Callable[..., Any]] = {
+    "PDT": pulse_model,
     "PDDT": pulse_model_disaggregated,
     "SDT": step_model,
     "SDDT": step_model_disaggregated,
     "OODDT": onoff_model,
-    "OOPDT": onoff_pulse_model, 
+    "OOPDT": onoff_pulse_model,
     "OOPDDT": onoff_pulse_model_disaggregated,
     "MSEQCT": continuous_model,
 }
-# Explicit type overrides where default value type != desired argparse type
-_PARAM_TYPES = {"batch_size": float}
 
 
-def model_selector(model: str, **kwargs):
-    if model not in MODEL_NAMES:
-        raise ValueError(f"Unknown model: {model!r}")
-    return MODEL_NAMES[model](**kwargs)
+def get_model_builder(model_name: str) -> Callable[..., Any]:
+    if model_name not in MODEL_BUILDERS:
+        raise ValueError(f"Unknown model: {model_name}")
+    return MODEL_BUILDERS[model_name]
 
 
-def test_model(
-    processes: List[Process],
+def save_pickle(path: str, obj: Any) -> None:
+    with open(path, "wb") as f:
+        pickle.dump(obj, f)
+
+
+def load_pickle(path: str) -> Any:
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def parse_xml_files_arg(
+    xml_files_arg: list[str] | None,
+) -> list[str | list[str]] | None:
+    """
+    Parse CLI input of the form
+
+        --xml-files phase0.xml "phase1a.xml,phase1b.xml"
+
+    into
+
+        ["phase0.xml", ["phase1a.xml", "phase1b.xml"]]
+    """
+    if xml_files_arg is None:
+        return None
+    return [entry.split(",") if "," in entry else entry for entry in xml_files_arg]
+
+
+def solve_model_for_instance(
+    *,
+    processes: list[Process],
     n_resources: int,
     solver: str,
     scarcity: float,
     objective: str,
-    min_max: List[Tuple[int, int]],
-    max_phases: int = 3,
-    timeout: int = 600,
-    db: Optional[Database] = None,
-    db_instance_id=None,
+    min_max: list[tuple[int, int]],
+    max_phases: int,
+    timeout: int,
+    db: Database,
+    instance_id: int,
 ) -> None:
-    if db is None:
-        db = Database("database.db")
-    if db_instance_id is None:
-        raise ValueError("db_instance_id must be provided")
-    print("-" * 50)
-    print(f"Model: {solver}\tScarcity: {scarcity}")
-    max_start_time = int(max(p.start_time + p.max_processing_time() for p in processes))
+    """
+    Build the OR instance, solve the selected model, save all artefacts,
+    and record the result in the database.
+    """
+    print("-" * 60)
+    print(f"Model = {solver}\tScarcity = {scarcity:.1f}")
+
+    max_start_time = int(
+        max(process.start_time + process.max_processing_time() for process in processes)
+    )
+
     instance = get_or_instance(
-        processes=processes, 
-        scarcity=scarcity, 
+        processes=processes,
+        scarcity=scarcity,
         max_start_time=max_start_time,
-        n_resources=n_resources, 
-        min_max=min_max, 
+        n_resources=n_resources,
+        min_max=min_max,
         max_phases=max_phases,
     )
 
-    base = f"data/{db_instance_id}"
-    os.makedirs(base, exist_ok=True)
-    instance_file = f"{base}/instance_{scarcity}.json"
+    data_dir = f"data/{instance_id}"
+    os.makedirs(data_dir, exist_ok=True)
+
+    instance_file = f"{data_dir}/instance_{scarcity:.1f}.json"
     with open(instance_file, "w") as f:
         json.dump(instance, f)
 
+    scenario_id = db.upsert_scenario(
+        instance_id=instance_id,
+        scarcity=scarcity,
+        instance_file=instance_file,
+        T=instance["T"],
+        n_jobs=instance["n"],
+        n_resources=n_resources,
+        capacities=instance["R"],
+        descriptors={"objective": objective, "solver": solver},
+    )
+
+    builder = get_model_builder(solver)
+
     t0 = time.time()
-    model, divisor = model_selector(
-        solver,
-        n=instance["n"], 
-        T=instance["T"], 
-        M=instance["M"], 
+    model, divisor = builder(
+        n=instance["n"],
+        T=instance["T"],
+        M=instance["M"],
         R=instance["R"],
-        E=instance["E"], 
-        p=instance["p"], 
-        L=instance["L"], 
+        E=instance["E"],
+        p=instance["p"],
+        L=instance["L"],
         r=instance["r"],
-        O=instance["O"], 
-        ES=instance["ES"], 
+        O=instance["O"],
+        ES=instance["ES"],
         LS=instance["LS"],
         VP=instance["VP"],
-        obj=objective, 
+        obj=objective,
         timeout=timeout,
     )
-    #model.Params.OutputFlag = 1
+
     model.update()
     print(
-        f"Model: {model.NumVars} vars, "
+        f"Model size: {model.NumVars} vars, "
         f"{model.NumConstrs} constraints, "
-        f"{model.NumNZs} non-zeros"
+        f"{model.NumNZs} nonzeros"
     )
-    model.optimize()
 
-    sol_file = f"{base}/solution_{solver}_{scarcity}.json"
+    model.optimize()
+    runtime = time.time() - t0
+
+    sol_file = f"{data_dir}/solution_{solver}_{scarcity:.1f}.json"
     model.write(sol_file)
 
-    is_feasible = not (
-        model.status == GRB.INFEASIBLE
-        or (model.SolCount == 0 and model.status == GRB.TIME_LIMIT)
+    infeasible = model.status == GRB.INFEASIBLE
+    timed_out_without_solution = (
+        model.status == GRB.TIME_LIMIT and model.SolCount == 0
     )
+    interrupted = model.status == GRB.INTERRUPTED
 
-    if model.status == GRB.INTERRUPTED:
-        print("\033[93mModel interrupted\033[0m")
+    feasible = not (infeasible or timed_out_without_solution)
+    optimal = model.status == GRB.OPTIMAL
+    finished = not interrupted
+
+    if interrupted:
+        print("Model interrupted.")
         if model.SolCount > 0:
-            print("\033[92mFeasible solution found\033[0m")
             print(
-                f"\033[1mRunning time: {time.time() - t0:.3f}s\t"
-                f"Objective: {model.objVal * divisor:.0f}\033[0m"
+                f"Feasible solution found. Runtime = {runtime:.3f}s, "
+                f"Objective = {model.objVal * divisor:.0f}"
             )
         else:
-            print("\033[91mNo solution found\033[0m")
-    elif model.status == GRB.INFEASIBLE:
-        print("\033[91mModel infeasible\033[0m")
-    elif not is_feasible:
-        print("\033[91mNo solution found within time limit\033[0m")
+            print("No incumbent solution available.")
+    elif infeasible:
+        print("Model infeasible.")
+    elif timed_out_without_solution:
+        print("No solution found within the time limit.")
     else:
-        print("\033[92mFeasible solution found\033[0m")
         print(
-            f"\033[1mRunning time: {time.time() - t0:.3f}s\t"
-            f"Objective: {model.objVal * divisor:.0f}\033[0m"
+            f"Feasible solution found. Runtime = {runtime:.3f}s, "
+            f"Objective = {model.objVal * divisor:.0f}"
         )
-        vis_kw = dict(
-            model=model, 
-            n=instance["n"], 
-            T=instance["T"], 
+
+        vis_kwargs = dict(
+            model=model,
+            n=instance["n"],
+            T=instance["T"],
             M=instance["M"],
-            R=instance["R"], 
-            p=instance["p"], 
+            R=instance["R"],
+            p=instance["p"],
             r=instance["r"],
-            processes=processes, 
+            processes=processes,
             divisor=divisor,
         )
         if solver in {"PDT", "PDDT", "OOPDT", "OOPDDT"}:
-            visualize_pulse_model(**vis_kw, filename=f"Schedule_{scarcity}")
+            visualize_pulse_model(
+                **vis_kwargs,
+                filename=f"Schedule_{solver}_{scarcity:.1f}",
+            )
         elif solver == "OODDT":
-            visualize_onoff_model(**vis_kw, filename=f"Schedule_onoff_{scarcity}")
+            visualize_onoff_model(
+                **vis_kwargs,
+                filename=f"Schedule_{solver}_{scarcity:.1f}",
+            )
         elif solver == "MSEQCT":
-            visualize_continuous_model(**vis_kw, filename=f"Schedule_cont_{scarcity}")
+            visualize_continuous_model(
+                **vis_kwargs,
+                filename=f"Schedule_{solver}_{scarcity:.1f}",
+            )
 
-    if not model.status == GRB.INTERRUPTED:
-        solution_kwargs = dict(
-            instance_id=db_instance_id, 
-            solver=solver, 
-            sol_file=sol_file,
-            instance_file=instance_file, 
-            scarcity=scarcity, 
-            divisor=divisor,
-            solved=True, 
-            status=model.status, 
-            objective=objective,
-            objective_val=model.objVal * divisor if is_feasible else None,
-        )
-        if db.get_solution(db_instance_id, solver, scarcity) is not None:
-            db.update_solution(**solution_kwargs)
-        else:
-            db.add_solution(**solution_kwargs)
-
-
-def create_tables(instance_id: int, db: Database) -> None:
-    n_proc = db.get_instance(instance_id)["number_of_processes"]
-    cols = "c|" * len(SCARCITIES)
-    scarcity_row = " & ".join(f"{s:.1f}" for s in SCARCITIES)
-
-    def _header(caption: str, label: str) -> str:
-        return (
-            "\\begin{table}[ht]\n\\centering\n"
-            f"\\caption{{{caption} ({n_proc} processes). "
-            "An entry with - indicates an infeasible instance.}}\n"
-            f"\\label{{{label}}}\n"
-            f"\\begin{{tabular}}{{|l|{cols}}}\n"
-            f"\\hline\n\\(RS\\) & {scarcity_row} \\\\ \\hline\n"
-        )
-
-    makespan_table = _header("Makespan", "tab:makespan")
-    runtime_table = _header("Runtime", "tab:runtime")
-    footer = "\\end{tabular}\n\\end{table}\n"
-
-    for model_name in MODELS:
-        ms_row = rt_row = model_name
-        for scarcity in SCARCITIES:
-            sol = db.get_solution(instance_id, model_name, scarcity)
-            if sol is None:
-                ms_row += " & ?"; rt_row += " & ?"
-                continue
-            info = json.load(open(sol["sol_file"]))["SolutionInfo"]
-            status, sol_count = info["Status"], info["SolCount"]
-            if status == GRB.INFEASIBLE or (sol_count == 0 and status == GRB.TIME_LIMIT):
-                ms_row += " & -"; rt_row += " & -"
-            else:
-                obj = int(info["ObjVal"])
-                cell = f"\\textbf{{{obj}}}" if status == GRB.OPTIMAL else str(obj)
-                ms_row += f" & {cell}"; rt_row += f" & {info['Runtime']:.2f}s"
-        makespan_table += ms_row + " \\\\ \\hline\n"
-        runtime_table += rt_row + " \\\\ \\hline\n"
-
-    print(makespan_table + footer)
-    print(runtime_table + footer)
+    db.record_solution(
+        instance_id=instance_id,
+        scenario_id=scenario_id,
+        solver=solver,
+        sol_file=sol_file,
+        instance_file=instance_file,
+        scarcity=scarcity,
+        divisor=divisor,
+        objective=objective,
+        status=model.status,
+        finished=finished,
+        feasible=feasible,
+        optimal=optimal,
+        objective_val=(
+            model.objVal * divisor if feasible and model.SolCount > 0 else None
+        ),
+        best_bound=float(model.ObjBound) if hasattr(model, "ObjBound") else None,
+        mip_gap=float(model.MIPGap) if hasattr(model, "MIPGap") else None,
+        runtime=runtime,
+    )
 
 
 def cmd_generate(args: argparse.Namespace) -> None:
-    params = {k: getattr(args, k) for k in DEFAULT_PARAMS}
-    assert params["min_base_duration"] * params["min_resource_ratio"] >= 1.0, \
-        "min_base_duration * min_resource_ratio must be >= 1.0"
+    params = {key: getattr(args, key) for key in DEFAULT_PARAMS}
 
-    xml_files = (
-        [e.split(",") if "," in e else e for e in args.xml_files]
-        if getattr(args, "xml_files", None) is not None else None
+    if params["min_base_duration"] * params["min_resource_ratio"] < 1.0:
+        raise ValueError(
+            "min_base_duration * min_resource_ratio must be at least 1.0"
+        )
+
+    xml_files = parse_xml_files_arg(args.xml_files)
+
+    generator_params = {k: v for k, v in params.items() if k != "timeout"}
+    processes, global_resource_ids = generate_instance(
+        xml_files=xml_files,
+        **generator_params,
     )
-    gen_params = {k: v for k, v in params.items() if k != "timeout"}
-    processes, global_resource_ids = generate_instance(xml_files=xml_files, **gen_params)
+
     n_resources = len(global_resource_ids)
 
-    db = Database("database.db")
-    db_instance_id = db.add_instance(**params, n_resources=n_resources, processes_file="")
+    with Database(args.database) as db:
+        instance_id = db.add_instance(
+            **params,
+            n_resources=n_resources,
+            processes_file="",
+            xml_files=xml_files,
+            global_resource_ids=global_resource_ids,
+            generator_version="compact-rewrite",
+            generation_metadata={},
+        )
 
-    data_dir = f"data/{db_instance_id}"
-    os.makedirs(data_dir, exist_ok=True)
-    processes_file = f"{data_dir}/processes.pkl"
-    with open(processes_file, "wb") as f:
-        pickle.dump((processes, global_resource_ids), f)
+        data_dir = f"data/{instance_id}"
+        os.makedirs(data_dir, exist_ok=True)
 
-    db.update_instance_processes_file(db_instance_id, processes_file)
-    db.close()
-    print(f"Instance ID : {db_instance_id}")
-    print(f"Resources   : {n_resources}  {global_resource_ids}")
+        processes_file = f"{data_dir}/processes.pkl"
+        save_pickle(processes_file, (processes, global_resource_ids))
+        db.update_instance_processes_file(instance_id, processes_file)
+
+    print(f"Instance ID : {instance_id}")
+    print(f"Resources   : {n_resources} {global_resource_ids}")
     print(f"Saved to    : {processes_file}")
 
 
 def cmd_run(args: argparse.Namespace) -> None:
-    db = Database("database.db")
-    row = db.get_instance(args.instance_id)
-    if row is None:
-        print(f"Error: instance {args.instance_id} not found in database.")
-        return
+    with Database(args.database) as db:
+        row = db.get_instance(args.instance_id)
+        if row is None:
+            print(f"Error: instance {args.instance_id} not found.")
+            return
 
-    with open(row["processes_file"], "rb") as f:
-        processes, _ = pickle.load(f)
+        processes, _ = load_pickle(row["processes_file"])
+        models = args.models or MODELS
+        scarcities = args.scarcities or SCARCITIES
 
-    min_max = get_min_max_demands(processes=processes, max_phases=row["max_phases"])
-    for model_name in (args.models or MODELS):
-        for scarcity in (args.scarcities or SCARCITIES):
-            existing = db.get_solution(args.instance_id, model_name, scarcity)
-            if existing is not None and existing["solved"]:
-                print(f"Skipping {model_name} @ {scarcity:.1f} (already in DB)")
-                continue
-            test_model(
-                processes=processes, 
-                n_resources=row["n_resources"],
-                solver=model_name, 
-                scarcity=scarcity, 
-                objective=args.objective,
-                min_max=min_max, 
-                max_phases=row["max_phases"],
-                timeout=row["timeout"], 
-                db=db, 
-                db_instance_id=args.instance_id,
-            )
+        min_max = get_min_max_demands(
+            processes=processes,
+            max_phases=row["max_phases"],
+        )
 
-    objective, runtime = db.make_latex_tables(
-        args.instsance_id, args.models or MODELS, args.scarcities or SCARCITIES
-    )
-    print(objective)
-    print(runtime)
-    db.close()
+        for model_name in models:
+            for scarcity in scarcities:
+                existing = db.get_solution(args.instance_id, model_name, scarcity)
+                if existing is not None and existing["solved"]:
+                    print(f"Skipping {model_name} @ {scarcity:.1f} (already solved)")
+                    continue
+
+                solve_model_for_instance(
+                    processes=processes,
+                    n_resources=row["n_resources"],
+                    solver=model_name,
+                    scarcity=scarcity,
+                    objective=args.objective,
+                    min_max=min_max,
+                    max_phases=row["max_phases"],
+                    timeout=row["timeout"],
+                    db=db,
+                    instance_id=args.instance_id,
+                )
+
+        objective_table, runtime_table = db.make_latex_tables(
+            args.instance_id,
+            models,
+            scarcities,
+        )
+        print(objective_table)
+        print(runtime_table)
 
 
-def cmd_run_all_unsolved(args: argparse.Namespace) -> None:
-    """ Solve all instances in the database that are not yet solved. """
-    db = Database("database.db")
-    all_instance_ids = [r["id"] for r in db.get_instances()]
-    print(all_instance_ids)
-    for instance_id in all_instance_ids:
+def cmd_run_all(args: argparse.Namespace) -> None:
+    with Database(args.database) as db:
+        instance_ids = [row["id"] for row in db.get_instances()]
+
+    for instance_id in instance_ids:
         args.instance_id = instance_id
         args.models = None
         args.scarcities = None
-        n_processes = db.get_instance(instance_id)["number_of_processes"]
-        timeout = db.get_instance(instance_id)["timeout"]
-        print(f"Running instance {instance_id} ({n_processes} processes, timeout {timeout})")
-        if n_processes > 50:
-            print("Skipping (too many processes)")
-            continue
+        print(f"Running instance {instance_id}")
         cmd_run(args)
 
 
-def cmd_run_all_unsolved_in_dataset(args: argparse.Namespace) -> None:
-    """ Solve all instances in a dataset that are not yet solved. """
-    db = Database("database.db")
-    unsolved = db.get_unsolved_solutions_for_dataset(args.dataset_id)
-    print(f"Solving {len(unsolved)} instances")
-    for sol in unsolved:
-        instance_id = sol["instance_id"]
-        row = db.get_instance(instance_id)
-        if row["number_of_processes"] > 50:
-            print(f"Skipping instance {instance_id} ({row['number_of_processes']} processes)")
-            continue
-        with open(row["processes_file"], "rb") as f:
-            processes, _ = pickle.load(f)
-        min_max = get_min_max_demands(processes=processes, max_phases=row["max_phases"])
-        test_model(
-            processes=processes, 
-            n_resources=row["n_resources"],
-            solver=sol["solver"], 
-            scarcity=sol["scarcity"], 
-            objective=sol["objective"],
-            min_max=min_max, 
-            max_phases=row["max_phases"],
-            timeout=row["timeout"], 
-            db=db, 
-            db_instance_id=instance_id,
-        )
-    db.close()
+def cmd_run_all_in_dataset(args: argparse.Namespace) -> None:
+    with Database(args.database) as db:
+        pending = db.get_unsolved_solutions_for_dataset(args.dataset_id)
+
+        print(f"Solving {len(pending)} unsolved model-instance pairs")
+
+        for sol in pending:
+            instance_id = sol["instance_id"]
+            row = db.get_instance(instance_id)
+            if row is None:
+                continue
+
+            processes, _ = load_pickle(row["processes_file"])
+            min_max = get_min_max_demands(
+                processes=processes,
+                max_phases=row["max_phases"],
+            )
+
+            solve_model_for_instance(
+                processes=processes,
+                n_resources=row["n_resources"],
+                solver=sol["solver"],
+                scarcity=sol["scarcity"],
+                objective=sol["objective"],
+                min_max=min_max,
+                max_phases=row["max_phases"],
+                timeout=row["timeout"],
+                db=db,
+                instance_id=instance_id,
+            )
 
 
 def cmd_create_dataset(args: argparse.Namespace) -> None:
-    """ Create a dataset of multiple instances, all with the same number of processes. """
-    params = {k: getattr(args, k) for k in DEFAULT_PARAMS}
-    xml_files = (
-        [e.split(",") if "," in e else e for e in args.xml_files]
-        if getattr(args, "xml_files", None) is not None else None
-    )
-    gen_params = {k: v for k, v in params.items() if k != "timeout"}
+    params = {key: getattr(args, key) for key in DEFAULT_PARAMS}
+    xml_files = parse_xml_files_arg(args.xml_files)
     scarcities = args.scarcities or SCARCITIES
 
-    db = Database("database.db")
-    db.add_dataset(
-        name=args.name,
-        description=args.description,
-        n_processes=args.number_of_processes,
-        n_instances=args.n_instances,
-    )
-    dataset_id = db.get_datasets()[-1]["id"]
-    for scarcity in scarcities:
-        for i in range(args.n_instances):
-            processes, global_resource_ids = generate_instance(xml_files=xml_files, **gen_params)
+    with Database(args.database) as db:
+        dataset_id = db.add_dataset(
+            name=args.name,
+            description=args.description,
+            n_processes=args.number_of_processes,
+            n_instances=args.n_instances,
+        )
+
+        for _ in range(args.n_instances):
+            generator_params = {k: v for k, v in params.items() if k != "timeout"}
+            processes, global_resource_ids = generate_instance(
+                xml_files=xml_files,
+                **generator_params,
+            )
+
             n_resources = len(global_resource_ids)
-            db_instance_id = db.add_instance(**params, n_resources=n_resources, processes_file="")
 
-            data_dir = f"data/{db_instance_id}"
+            instance_id = db.add_instance(
+                **params,
+                n_resources=n_resources,
+                processes_file="",
+                xml_files=xml_files,
+                global_resource_ids=global_resource_ids,
+                generator_version="compact-rewrite",
+                generation_metadata={},
+            )
+
+            data_dir = f"data/{instance_id}"
             os.makedirs(data_dir, exist_ok=True)
-            processes_file = f"{data_dir}/processes.pkl"
-            with open(processes_file, "wb") as f:
-                pickle.dump((processes, global_resource_ids), f)
 
-            db.update_instance_processes_file(db_instance_id, processes_file)
-            db.add_instance_to_dataset(db_instance_id, dataset_id)
-            for model_name in MODELS:
-                db.create_pending_solution(db_instance_id, model_name, scarcity, args.objective)
-            print(f"Instance {db_instance_id} created (scarcity={scarcity})")
-    print(f"Dataset {dataset_id} created")
-    db.close()
+            processes_file = f"{data_dir}/processes.pkl"
+            save_pickle(processes_file, (processes, global_resource_ids))
+            db.update_instance_processes_file(instance_id, processes_file)
+
+            db.add_instance_to_dataset(instance_id, dataset_id)
+
+            for scarcity in scarcities:
+                for model_name in MODELS:
+                    db.create_pending_solution(
+                        instance_id=instance_id,
+                        solver=model_name,
+                        scarcity=scarcity,
+                        objective=args.objective,
+                    )
+
+            print(f"Created instance {instance_id}")
+
+        print(f"Created dataset {dataset_id}")
 
 
 def cmd_table(args: argparse.Namespace) -> None:
-    """ Print LaTeX tables for a given instance or an entire dataset. """
-    db = Database("database.db")
-    if args.instance_id is not None:
-        objective, runtime = db.make_latex_tables(
-            args.instance_id, args.models or MODELS, args.scarcities or SCARCITIES
-        )
-    else:
-        objective, runtime = db.make_dataset_latex_tables(
-            args.dataset_id, args.models or MODELS, args.scarcities or SCARCITIES
-        )
-    print(objective)
-    print(runtime)
-    db.close()
+    with Database(args.database) as db:
+        models = args.models or MODELS
+        scarcities = args.scarcities or SCARCITIES
+
+        if args.instance_id is not None:
+            objective_table, runtime_table = db.make_latex_tables(
+                args.instance_id,
+                models,
+                scarcities,
+            )
+        else:
+            objective_table, runtime_table = db.make_dataset_latex_tables(
+                args.dataset_id,
+                models,
+                scarcities,
+            )
+
+        print(objective_table)
+        print(runtime_table)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Resource-constrained scheduling experiment runner"
     )
+    parser.add_argument(
+        "--database",
+        default="database.db",
+        help="SQLite database path",
+    )
+
     sub = parser.add_subparsers(dest="command", required=True)
 
-    gen = sub.add_parser("generate", help="Generate a new instance and save it to the DB")
-    for k, v in DEFAULT_PARAMS.items():
+    gen = sub.add_parser("generate", help="Generate a single instance")
+    for key, default in DEFAULT_PARAMS.items():
         gen.add_argument(
-            f"--{k.replace('_', '-')}",
-            type=_PARAM_TYPES.get(k, type(v)),
-            default=v,
+            f"--{key.replace('_', '-')}",
+            type=ARG_TYPES.get(key, type(default)),
+            default=default,
         )
     gen.add_argument(
-        "--xml-files", nargs="+", default=None, dest="xml_files",
-        metavar="FILE[,FILE…]",
+        "--xml-files",
+        nargs="+",
+        default=None,
+        dest="xml_files",
+        metavar="FILE[,FILE...]",
         help=(
-            "RA-PST XML file(s) per phase. Each argument corresponds to one phase "
-            "(cycled if fewer than --max-phases are given). Use a comma-separated "
-            "list to define a per-process pool for that phase, e.g.: "
-            "--xml-files phase0.xml \"phase1a.xml,phase1b.xml\""
+            "RA-PST XML file(s) per phase. Each argument corresponds to one "
+            "phase (cycled if fewer than --max-phases are given). Use a "
+            "comma-separated list to define a per-phase pool, e.g. "
+            '--xml-files phase0.xml "phase1a.xml,phase1b.xml"'
         ),
     )
     gen.set_defaults(func=cmd_generate)
 
     run = sub.add_parser(
-        "run", help="Solve models for an existing instance (skips already-solved pairs)"
+        "run",
+        help="Solve models for an existing instance",
     )
-    run.add_argument("instance_id", type=int, help="DB instance ID returned by 'generate'")
-    run.add_argument("--objective", default="flow-time", choices=["makespan", "flow-time"])
     run.add_argument(
-        "--models", nargs="+", choices=MODELS, default=None, metavar="MODEL",
+        "instance_id",
+        type=int,
+        help="Instance ID in the database",
+    )
+    run.add_argument(
+        "--objective",
+        default="flow-time",
+        choices=["makespan", "flow-time"],
+    )
+    run.add_argument(
+        "--models",
+        nargs="+",
+        choices=MODELS,
+        default=None,
+        metavar="MODEL",
         help=f"Subset of models to run (default: all). Choices: {MODELS}",
     )
     run.add_argument(
-        "--scarcities", nargs="+", type=float, default=None, metavar="S",
-        help="Subset of scarcity levels to run (default: all 0.0–1.0)",
+        "--scarcities",
+        nargs="+",
+        type=float,
+        default=None,
+        metavar="S",
+        help="Subset of scarcity levels to run (default: all 0.2-1.0)",
     )
     run.set_defaults(func=cmd_run)
 
-    run_all_unsolved = sub.add_parser(
-        "run-all", help="Solve all unsolved instances"
+    run_all = sub.add_parser(
+        "run-all",
+        help="Solve all instances currently stored in the database",
     )
-    run_all_unsolved.add_argument("--objective", default="flow-time", choices=["makespan", "flow-time"])
-    run_all_unsolved.set_defaults(func=cmd_run_all_unsolved)
+    run_all.add_argument(
+        "--objective",
+        default="flow-time",
+        choices=["makespan", "flow-time"],
+    )
+    run_all.set_defaults(func=cmd_run_all)
 
     run_dataset = sub.add_parser(
-        "run-all-in-dataset", help="Solve all unsolved instances in a dataset"
+        "run-all-in-dataset",
+        help="Solve all unsolved model-instance pairs in a dataset",
     )
-    run_dataset.add_argument("dataset_id", type=int, help="DB dataset ID returned by 'generate'")
-    run_dataset.set_defaults(func=cmd_run_all_unsolved_in_dataset)
+    run_dataset.add_argument(
+        "dataset_id",
+        type=int,
+        help="Dataset ID in the database",
+    )
+    run_dataset.set_defaults(func=cmd_run_all_in_dataset)
+
     create_dataset = sub.add_parser(
-        "create-dataset", help="Create a full dataset"
+        "create-dataset",
+        help="Create a dataset of multiple generated instances",
     )
     create_dataset.add_argument("name", type=str, help="Dataset name")
-    create_dataset.add_argument("--description", type=str, default="", help="Dataset description")
-    for k, v in DEFAULT_PARAMS.items():
+    create_dataset.add_argument(
+        "--description",
+        type=str,
+        default="",
+        help="Dataset description",
+    )
+    for key, default in DEFAULT_PARAMS.items():
         create_dataset.add_argument(
-            f"--{k.replace('_', '-')}",
-            type=_PARAM_TYPES.get(k, type(v)),
-            default=v,
+            f"--{key.replace('_', '-')}",
+            type=ARG_TYPES.get(key, type(default)),
+            default=default,
         )
-    create_dataset.add_argument("--n_instances", type=int, default=10, help="Number of instances")
     create_dataset.add_argument(
-        "--scarcities", nargs="+", type=float, default=None, metavar="S",
-        help="Subset of scarcity levels to create instances for (default: all 0.0–1.0). Each gets --n_instances instances.",
+        "--n-instances",
+        dest="n_instances",
+        type=int,
+        default=10,
+        help="Number of instances to generate",
     )
     create_dataset.add_argument(
-        "--objective", default="flow-time", choices=["makespan", "flow-time"]
+        "--scarcities",
+        nargs="+",
+        type=float,
+        default=None,
+        metavar="S",
+        help="Scarcity levels for which pending solutions are created",
     )
     create_dataset.add_argument(
-        "--xml-files", nargs="+", default=None, dest="xml_files",
-        metavar="FILE[,FILE…]",
+        "--objective",
+        default="flow-time",
+        choices=["makespan", "flow-time"],
+    )
+    create_dataset.add_argument(
+        "--xml-files",
+        nargs="+",
+        default=None,
+        dest="xml_files",
+        metavar="FILE[,FILE...]",
         help=(
-            "RA-PST XML file(s) per phase. Each argument corresponds to one phase "
-            "(cycled if fewer than --max-phases are given). Use a comma-separated "
-            "list to define a per-process pool for that phase, e.g.: "
-            "--xml-files phase0.xml \"phase1a.xml,phase1b.xml\""
+            "RA-PST XML file(s) per phase. Each argument corresponds to one "
+            "phase (cycled if fewer than --max-phases are given). Use a "
+            "comma-separated list to define a per-phase pool, e.g. "
+            '--xml-files phase0.xml "phase1a.xml,phase1b.xml"'
         ),
     )
     create_dataset.set_defaults(func=cmd_create_dataset)
 
     table = sub.add_parser(
-        "table", help="Print LaTeX tables for a given instance or an entire dataset"
+        "table",
+        help="Print LaTeX tables for one instance or one dataset",
     )
     table_group = table.add_mutually_exclusive_group(required=True)
-    table_group.add_argument("--instance-id", type=int, default=None, dest="instance_id", help="DB instance ID returned by 'generate'")
-    table_group.add_argument("--dataset-id", type=int, default=None, dest="dataset_id", help="DB dataset ID returned by 'create-dataset'")
-    table.add_argument("--models", nargs="+", choices=MODELS, default=None, metavar="MODEL")
-    table.add_argument("--scarcities", nargs="+", type=float, default=None, metavar="S")
+    table_group.add_argument(
+        "--instance-id",
+        type=int,
+        default=None,
+        dest="instance_id",
+        help="Instance ID in the database",
+    )
+    table_group.add_argument(
+        "--dataset-id",
+        type=int,
+        default=None,
+        dest="dataset_id",
+        help="Dataset ID in the database",
+    )
+    table.add_argument(
+        "--models",
+        nargs="+",
+        choices=MODELS,
+        default=None,
+        metavar="MODEL",
+    )
+    table.add_argument(
+        "--scarcities",
+        nargs="+",
+        type=float,
+        default=None,
+        metavar="S",
+    )
     table.set_defaults(func=cmd_table)
+
     return parser
 
 
-if __name__ == "__main__":
+def main() -> None:
     args = build_parser().parse_args()
     args.func(args)
+
+
+if __name__ == "__main__":
+    main()

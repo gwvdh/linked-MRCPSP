@@ -1,27 +1,21 @@
 from __future__ import annotations
 
-import random
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple, Union
+from typing import DefaultDict, Optional
 
 import numpy as np
 
-if __name__ == "__main__":
-    from vis import plot_combined_resource_demands
-    from definitions import NetworkType, PhaseProfile, Process
-    from xml_parser import RA_PST
-else:
-    from .vis import plot_combined_resource_demands
-    from .definitions import NetworkType, PhaseProfile, Process
-    from .xml_parser import RA_PST
+from .definitions import NetworkType, PhaseProfile, Process
+from .vis import plot_combined_resource_demands
+from .xml_parser import RA_PST
 
-XML_FILE = "rapst/full_rapst_permit.xml"
-PhaseTimeline = Dict[int, Dict[int, int]]
+DEFAULT_XML = "rapst/full_rapst_permit.xml"
+PhaseTimeline = dict[int, dict[int, int]]
 
 
 def generate_instance(
     number_of_processes: int,
-    xml_files: Optional[List[Union[str, List[str]]]] = None,
+    xml_files: Optional[list[str | list[str]]] = None,
     max_phases: int = 3,
     min_base_duration: float = 1.0,
     max_base_duration: float = 5.0,
@@ -31,222 +25,269 @@ def generate_instance(
     arrival_rate: float = 0.7,
     batch_size: float = 3.0,
     verbose: bool = True,
-) -> Tuple[List[Process], List[str]]:
-    """Generate a list of processes and a list of global resource IDs."""
+    seed: Optional[int] = None,
+) -> tuple[list[Process], list[str]]:
+    """
+    Generate synthetic processes by sampling a phase template for each phase,
+    drawing base task durations, and assigning a phase-network structure.
+    """
+    rng = np.random.default_rng(seed)
+
     if xml_files is None:
-        phase_pools = [[XML_FILE]] * max_phases
+        phase_pools = [[DEFAULT_XML]] * max_phases
     else:
         raw = [xml_files[i % len(xml_files)] for i in range(max_phases)]
-        phase_pools = [[e] if isinstance(e, str) else list(e) for e in raw]
+        phase_pools = [[x] if isinstance(x, str) else list(x) for x in raw]
 
-    all_xml = sorted({f for pool in phase_pools for f in pool})
-    ra_pst_options = {f: RA_PST(f) for f in all_xml}
+    all_xml = sorted({path for pool in phase_pools for path in pool})
+    ra_pst_by_file = {path: RA_PST(path) for path in all_xml}
+
     global_resource_ids = sorted(
-        {rid for rp in ra_pst_options.values() for rid in rp.resource_ids}
+        {rid for ra in ra_pst_by_file.values() for rid in ra.resource_ids}
     )
-    for rp in ra_pst_options.values():
-        rp._global_resource_ids = global_resource_ids
+    for ra in ra_pst_by_file.values():
+        ra._global_resource_ids = global_resource_ids
 
-    # Generate resource ratios
-    resource_ratios: dict[str, float] = {
-        id: max(
+    resource_ratios = {
+        rid: max(
             min_resource_ratio,
-            float(np.random.normal(resource_ratio_center, resource_ratio_spread)),
+            float(rng.normal(resource_ratio_center, resource_ratio_spread)),
         )
-        for id in global_resource_ids
+        for rid in global_resource_ids
     }
-    resource_levels = sorted(global_resource_ids.copy())
 
-    rng = np.random.default_rng()
-    interarrival = rng.exponential(1.0 / arrival_rate, size=number_of_processes)
-    batches = np.random.poisson(batch_size, number_of_processes)
+    interarrival_times = rng.exponential(1.0 / arrival_rate, size=number_of_processes)
+    batch_sizes = rng.poisson(batch_size, size=number_of_processes)
 
-    processes: List[Process] = []
-    start_time = 0
-    for period, batch in enumerate(batches):
-        if period > 0:
-            start_time += int(interarrival[period])
+    processes: list[Process] = []
+    current_start = 0
+
+    for batch_idx, batch in enumerate(batch_sizes):
+        if batch_idx > 0:
+            current_start += int(interarrival_times[batch_idx])
+
         for _ in range(int(batch)):
-            if len(processes) >= number_of_processes: break
-            phases = []
+            if len(processes) >= number_of_processes:
+                break
+
+            phases: list[PhaseProfile] = []
             for phase_idx in range(max_phases):
-                # Construct a phase for the current process
-                ra_pst = ra_pst_options[random.choice(phase_pools[phase_idx])]
-                phases.append(PhaseProfile(
-                    base_durations=[
-                        random.uniform(min_base_duration, max_base_duration)
-                        for _ in range(ra_pst.get_number_of_tasks())
-                    ],
-                    resource_ratios=resource_ratios,
-                    ra_pst=ra_pst,
-                ))
-            structure = random.choice(list(NetworkType))
-            if verbose:
-                print(f"{len(processes)}: structure={structure.name}, start={start_time}")
-            processes.append(
-                Process(network_type=structure, phases=phases, 
-                        start_time=start_time)
+                ra_pst = ra_pst_by_file[rng.choice(phase_pools[phase_idx])]
+                phases.append(
+                    PhaseProfile(
+                        base_durations=[
+                            rng.uniform(min_base_duration, max_base_duration)
+                            for _ in range(ra_pst.get_number_of_tasks())
+                        ],
+                        resource_ratios=resource_ratios,
+                        ra_pst=ra_pst,
+                    )
+                )
+
+            network = rng.choice(list(NetworkType))
+            process = Process(
+                network_type=network,
+                phases=phases,
+                start_time=current_start,
             )
-        if len(processes) >= number_of_processes: break
+            processes.append(process)
+
+            if verbose:
+                print(
+                    f"{len(processes) - 1}: "
+                    f"structure={network.name}, start={current_start}"
+                )
+
+        if len(processes) >= number_of_processes:
+            break
 
     return processes, global_resource_ids
 
 
-def _active_phases(network_type: NetworkType) -> int:
+def active_phases(network_type: NetworkType) -> int:
     return len(network_type.value)
 
 
-def _make_phase_timelines(max_phases: int) -> List[Dict[int, Dict[int, int]]]:
+def make_phase_timelines(max_phases: int) -> list[DefaultDict[int, DefaultDict[int, int]]]:
     return [defaultdict(lambda: defaultdict(int)) for _ in range(max_phases)]
 
 
-def _collect_resource_indices(processes: List[Process]) -> List[int]:
-    return sorted({
-        res
-        for process in processes
-        for phase_tasks in process.tasks
-        for task in phase_tasks
-        if task is not None
-        for res in task.resource
-        if res is not None
-    })
-
-
-def _schedule_phase(
-    process: Process,
-    phase_index: int,
-    mode: int,
-    phase_end: List[int],
-    phase_timelines: List[Dict],
-) -> int:
-    """ Schedule a single phase of a process at the earliest start time. """
-    preds = process.network_type.value[phase_index]
-    task_start = (
-        process.start_time if not preds else max(phase_end[p] for p in preds)
+def collect_resource_indices(processes: list[Process]) -> list[int]:
+    return sorted(
+        {
+            res
+            for process in processes
+            for phase_tasks in process.tasks
+            for task in phase_tasks
+            for res in task.resource
+            if res is not None
+        }
     )
-    for task in process.tasks[phase_index]:
-        if task is None:
-            continue
-        dur, res = task.duration[mode], task.resource[mode]
-        if res is not None:
-            for t in range(dur):
-                phase_timelines[phase_index][task_start + t][res] += 1
-        task_start += dur
-    return task_start
+
+
+def schedule_phase(
+    process: Process,
+    phase_idx: int,
+    mode: int,
+    phase_end: list[int],
+    phase_timelines: list[DefaultDict[int, DefaultDict[int, int]]],
+) -> int:
+    predecessors = process.network_type.value[phase_idx]
+    start = process.start_time if not predecessors else max(phase_end[p] for p in predecessors)
+
+    t = start
+    for task in process.tasks[phase_idx]:
+        duration = task.duration[mode]
+        resource = task.resource[mode]
+        if resource is not None:
+            for tau in range(duration):
+                phase_timelines[phase_idx][t + tau][resource] += 1
+        t += duration
+
+    return t
 
 
 def simulate_extremal(
-    processes: List[Process], max_phases: int
-) -> List[List[PhaseTimeline]]:
+    processes: list[Process],
+    max_phases: int,
+) -> list[list[PhaseTimeline]]:
     """
-    Simulate the extremal resource demands of a list of processes. 
-    Schedule processes at the earliest start time. 
+    For each resource, choose in every phase the mode with maximum demand for
+    that resource and simulate earliest-start execution.
     """
-    timelines = []
-    for resource in _collect_resource_indices(processes):
-        phase_timelines = _make_phase_timelines(max_phases)
+    timelines_by_resource: list[list[PhaseTimeline]] = []
+
+    for resource in collect_resource_indices(processes):
+        phase_timelines = make_phase_timelines(max_phases)
+
         for process in processes:
             modes = process.get_max_resource_demand_mode(resource)
-            phase_end: List[int] = []
-            for i in range(_active_phases(process.network_type)):
-                if modes[i] is None:
-                    phase_end.append(
-                        phase_end[-1] if phase_end else process.start_time
-                    )
-                else:
-                    phase_end.append(
-                        _schedule_phase(process, i, modes[i],
-                                        phase_end, phase_timelines)
-                    )
-        timelines.append(phase_timelines)
-    return timelines
+            phase_end: list[int] = []
+
+            for phase_idx in range(active_phases(process.network_type)):
+                mode = modes[phase_idx]
+                if mode is None:
+                    phase_end.append(phase_end[-1] if phase_end else process.start_time)
+                    continue
+                phase_end.append(
+                    schedule_phase(process, phase_idx, mode, phase_end, phase_timelines)
+                )
+
+        timelines_by_resource.append(phase_timelines)
+
+    return timelines_by_resource
 
 
 def simulate_processes(
-    processes: List[Process], max_phases: int
-) -> List[PhaseTimeline]:
-    """ Simulate the scheduling of processes in a random mode. """
-    phase_timelines = _make_phase_timelines(max_phases)
+    processes: list[Process],
+    max_phases: int,
+    seed: Optional[int] = None,
+) -> list[PhaseTimeline]:
+    """
+    Simulate processes under randomly selected phase modes.
+    """
+    rng = np.random.default_rng(seed)
+    phase_timelines = make_phase_timelines(max_phases)
+
     for process in processes:
         modes = [
-            random.randrange(process.phases[i].number_of_modes)
+            int(rng.integers(process.phases[i].number_of_modes))
             for i in range(len(process.phases))
         ]
-        phase_end: List[int] = []
-        for i in range(_active_phases(process.network_type)):
+
+        phase_end: list[int] = []
+        for phase_idx in range(active_phases(process.network_type)):
             phase_end.append(
-                _schedule_phase(process, i, modes[i], phase_end, phase_timelines)
+                schedule_phase(
+                    process,
+                    phase_idx,
+                    modes[phase_idx],
+                    phase_end,
+                    phase_timelines,
+                )
             )
+
     return [dict(sorted(tl.items())) for tl in phase_timelines]
 
 
 def compute_min_demands(
-    processes: List[Process], max_phases: int
-) -> List[Dict[int, int]]:
-    """ Compute the minimum resource demands of a list of processes. """
+    processes: list[Process],
+    max_phases: int,
+) -> list[dict[int, int]]:
+    """
+    Minimum per-phase demand of each resource:
+    a task contributes 1 to resource r iff it uses r in every mode.
+    """
     min_demands = [defaultdict(int) for _ in range(max_phases)]
+
     for process in processes:
-        for phase_id, phase_tasks in enumerate(process.tasks):
-            if phase_id >= max_phases:
+        for phase_idx, phase_tasks in enumerate(process.tasks):
+            if phase_idx >= max_phases:
                 break
+
             for task in phase_tasks:
-                if task is None:
-                    continue
-                n_modes = len(task.resource)
-                for res in {r for r in task.resource if r is not None}:
-                    min_req = int(
-                        all(task.resource[m] == res for m in range(n_modes))
+                resources = [r for r in task.resource if r is not None]
+                for res in set(resources):
+                    mandatory = int(all(r == res for r in task.resource))
+                    min_demands[phase_idx][res] = max(
+                        min_demands[phase_idx][res],
+                        mandatory,
                     )
-                    min_demands[phase_id][res] = max(
-                        min_demands[phase_id][res], min_req
-                    )
+
     return [dict(d) for d in min_demands]
 
 
 def get_extremal_demands(
-    timelines: List[List[PhaseTimeline]],
-) -> List[Dict[int, int]]:
-    result = [defaultdict(int) for _ in range(len(timelines[0]))]
-    for phase_timelines in timelines:
-        for phase_id, phase_timeline in enumerate(phase_timelines):
+    timelines_by_resource: list[list[PhaseTimeline]],
+) -> list[dict[int, int]]:
+    result = [defaultdict(int) for _ in range(len(timelines_by_resource[0]))]
+
+    for resource_timelines in timelines_by_resource:
+        for phase_idx, phase_timeline in enumerate(resource_timelines):
             for res_counts in phase_timeline.values():
                 for res, count in res_counts.items():
-                    result[phase_id][res] = max(result[phase_id][res], count)
+                    result[phase_idx][res] = max(result[phase_idx][res], count)
+
     return [dict(d) for d in result]
 
 
 def get_min_max_demands(
-    processes: List[Process], max_phases: int = 3
-) -> List[Tuple[int, int]]:
-    all_resource_indices = _collect_resource_indices(processes)
+    processes: list[Process],
+    max_phases: int = 3,
+    plot: bool = True,
+) -> list[tuple[int, int]]:
+    """
+    For each resource r, compute a pair:
+      (minimum guaranteed demand, maximum observed extremal demand).
+    """
+    resource_indices = collect_resource_indices(processes)
     timelines_max = simulate_extremal(processes, max_phases=max_phases)
 
-    plot_combined_resource_demands(
-        timelines_by_resource=timelines_max,
-        resource_indices=all_resource_indices,
-    )
+    if plot:
+        plot_combined_resource_demands(
+            timelines_by_resource=timelines_max,
+            resource_indices=resource_indices,
+        )
 
-    max_demands: Dict[int, int] = {}
-    for r_idx, res_phase_timelines in zip(all_resource_indices, timelines_max):
-        combined: Dict[int, int] = defaultdict(int)
-        for phase_tl in res_phase_timelines:
-            for t, res_counts in phase_tl.items():
-                combined[t] += res_counts.get(r_idx, 0)
-        max_demands[r_idx] = max(combined.values(), default=0)
+    max_demands: dict[int, int] = {}
+    for res_idx, resource_phase_timelines in zip(resource_indices, timelines_max):
+        combined = defaultdict(int)
+        for phase_timeline in resource_phase_timelines:
+            for t, counts in phase_timeline.items():
+                combined[t] += counts.get(res_idx, 0)
+        max_demands[res_idx] = max(combined.values(), default=0)
 
     min_demands_by_phase = compute_min_demands(processes, max_phases)
-    all_min_res = sorted({r for phase in min_demands_by_phase for r in phase})
+    all_min_resources = sorted({r for phase in min_demands_by_phase for r in phase})
     min_demands = {
         r: max(phase.get(r, 0) for phase in min_demands_by_phase)
-        for r in all_min_res
+        for r in all_min_resources
     }
 
-    print("Min demands:", {r: min_demands.get(r, 0) for r in all_resource_indices})
+    print("Min demands:", {r: min_demands.get(r, 0) for r in resource_indices})
     print("Max demands:", max_demands)
-    return [
-        (min_demands.get(r, 0), max_demands.get(r, 0))
-        for r in all_resource_indices
-    ]
+
+    return [(min_demands.get(r, 0), max_demands.get(r, 0)) for r in resource_indices]
 
 
 def get_capacity(min_demand: int, max_demand: int, scarcity: float) -> int:
@@ -254,6 +295,6 @@ def get_capacity(min_demand: int, max_demand: int, scarcity: float) -> int:
 
 
 if __name__ == "__main__":
-    procs, _ = generate_instance(number_of_processes=60, verbose=True)
-    demands = get_min_max_demands(procs, max_phases=3)
-    print("Min/max demands:", demands)
+    processes, resource_ids = generate_instance(number_of_processes=60, verbose=True)
+    print(f"Resources: {resource_ids}")
+    print(get_min_max_demands(processes, max_phases=3))
