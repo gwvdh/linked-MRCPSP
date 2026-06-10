@@ -4,6 +4,7 @@ import numpy as np
 from gurobipy import GRB
 from ortools.sat.python import cp_model
 from instances.definitions import NetworkType
+import os
 
 
 def visualize_pulse_model(
@@ -579,72 +580,66 @@ def visualize_cp_model(
     obj_name: str = "Objective",
 ) -> None:
     """
-    Visualizes the solution of a solved OR-Tools CP-SAT model produced by
-    constraint_programming_model.
+    Visualizes the solution of a solved OR-Tools CP-SAT model.
 
-    model:          CP-SAT model returned by constraint_programming_model
-    solver:         CpSolver after calling solver.Solve(model)
-    n:              Number of activities
-    T:              Number of time slots before normalization
-    M:              Number of modes per activity
-    R:              List of resource capacities R[k]
-    p:              Processing times p[i][m] before normalization
-    r:              Resource requirements r[i][m][k]
-    processes:      List of Process objects
-    divisor:        Normalization divisor returned by constraint_programming_model
-    activity_names: Optional list of labels for each activity
-    filename:       Output filename, saved under plots/
-    obj_name:       Label used for the objective in the plot title
+    This expects the CP model variables to be named as in cp.py:
+
+        start_{i}_{m}
+        end_{i}_{m}
+        is_present_{i}_{m}
+
+    Notes
+    -----
+    In your Model base class, p and T are normalized during initialization.
+    Therefore this function treats T and p as already normalized.
+    The objective value is multiplied by divisor for display, matching the
+    Gurobi visualizers.
     """
     if activity_names is None:
         activity_names = [f"A{i}" for i in range(n)]
 
     os.makedirs("plots", exist_ok=True)
 
-    T_norm = T // divisor
+    # CPModel passes already-normalized T and p.
+    T_norm = T
     K = len(R)
+
+    status = solver.ResponseProto().status
+    has_solution = status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
 
     # -------------------------------------------------------------------------
     # Extract CP-SAT solution values by variable name
     # -------------------------------------------------------------------------
-    #
-    # Your CP model creates variables named:
-    #   start_{i}_{m}
-    #   end_{i}_{m}
-    #   is_present_{i}_{m}
-    #
-    # Since the model-building function currently does not return all_tasks,
-    # we read values from the solver response proto using the variable names
-    # stored in model.Proto().
-    #
-    response = solver.ResponseProto()
-    proto = model.Proto()
-
-    vars_map: dict[str, int] = {}
-
-    for idx, var_proto in enumerate(proto.variables):
-        if idx < len(response.solution):
-            vars_map[var_proto.name] = int(round(response.solution[idx]))
-
-    # schedule[i] = (mode, start, end), in normalized time
     schedule: dict[int, tuple[int, int, int]] = {}
 
-    for i in range(n):
-        for m in range(M[i]):
-            present = vars_map.get(f"is_present_{i}_{m}", 0)
+    if has_solution:
+        response = solver.ResponseProto()
+        proto = model.Proto()
 
-            if present > 0.5:
-                t_start = vars_map.get(f"start_{i}_{m}", 0)
-                t_end = vars_map.get(f"end_{i}_{m}", t_start + p[i][m] // divisor)
+        vars_map: dict[str, int] = {}
 
-                t_start = max(0, min(t_start, T_norm))
-                t_end = max(t_start, min(t_end, T_norm))
+        for idx, var_proto in enumerate(proto.variables):
+            if idx < len(response.solution):
+                vars_map[var_proto.name] = int(round(response.solution[idx]))
 
-                schedule[i] = (m, t_start, t_end)
-                break
+        for i in range(n):
+            for m in range(M[i]):
+                present_name = f"is_present_{i}_{m}"
+                start_name = f"start_{i}_{m}"
+                end_name = f"end_{i}_{m}"
+
+                if vars_map.get(present_name, 0) > 0.5:
+                    t_start = vars_map.get(start_name, 0)
+                    t_end = vars_map.get(end_name, t_start + p[i][m])
+
+                    t_start = max(0, min(t_start, T_norm))
+                    t_end = max(t_start, min(t_end, T_norm))
+
+                    schedule[i] = (m, t_start, t_end)
+                    break
 
     # -------------------------------------------------------------------------
-    # Colour palette
+    # Colour palette, same idea as the other visualizers
     # -------------------------------------------------------------------------
     n_middle = len(processes)
     group_cmap = plt.colormaps["tab20"]
@@ -679,7 +674,7 @@ def visualize_cp_model(
     yticks: list[int] = []
     ylabels: list[str] = []
 
-    for process_idx, process in enumerate(processes):
+    for _process_idx, process in enumerate(processes):
         for phase in range(len(process.phases)):
             if process.network_type == NetworkType.SINGLE and phase >= 1:
                 continue
@@ -734,7 +729,10 @@ def visualize_cp_model(
     ax_gantt.grid(axis="x", linestyle="--", alpha=0.4)
     ax_gantt.set_axisbelow(True)
 
-    obj_label = f"{obj_name}: {solver.ObjectiveValue() * divisor:.0f}"
+    if has_solution:
+        obj_label = f"{obj_name}: {solver.ObjectiveValue() * divisor:.0f}"
+    else:
+        obj_label = "No solution"
 
     ax_gantt.set_title(
         f"Schedule – CP-SAT Gantt Chart    ({obj_label})",

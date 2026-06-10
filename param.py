@@ -11,6 +11,7 @@ MODELS = [
     "OOPDT",
     "OOPDDT",
     "MSEQCT",
+    "CP",
 ]
 
 SCARCITIES = [round(0.1 * s, 1) for s in range(2, 11)]

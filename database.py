@@ -95,6 +95,8 @@ class Database:
                 cpm_lb         REAL,
                 solver_time    REAL,
                 runtime        REAL,
+                var_count      INTEGER,
+                const_count    INTEGER,
                 FOREIGN KEY (scenario_id) REFERENCES scenarios (id)
             )
             """
@@ -342,6 +344,8 @@ class Database:
         cpm_lb: float | None = None,
         solver_time: float | None = None,
         runtime: float | None = None,
+        var_count: int | None = None,
+        const_count: int | None = None,
     ) -> int:
         self.cur.execute(
             """
@@ -363,9 +367,11 @@ class Database:
                 lower_bound,
                 cpm_lb,
                 solver_time,
-                runtime
+                runtime,
+                var_count,
+                const_count,
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 instance_id,
@@ -386,6 +392,8 @@ class Database:
                 cpm_lb,
                 solver_time,
                 runtime,
+                var_count,
+                const_count,
             ),
         )
         self.conn.commit()
@@ -411,6 +419,8 @@ class Database:
         cpm_lb: float | None = None,
         solver_time: float | None = None,
         runtime: float | None = None,
+        var_count: int | None = None,
+        const_count: int | None = None,
     ) -> None:
         self.cur.execute(
             """
@@ -430,7 +440,9 @@ class Database:
                 lower_bound   = ?,
                 cpm_lb        = ?,
                 solver_time   = ?,
-                runtime       = ?
+                runtime       = ?,
+                var_count     = ?,
+                const_count   = ?
             WHERE instance_id = ? AND solver = ? AND scarcity = ?
             """,
             (
@@ -449,6 +461,8 @@ class Database:
                 cpm_lb,
                 solver_time,
                 runtime,
+                var_count,
+                const_count,
                 instance_id,
                 solver,
                 scarcity,
@@ -498,6 +512,8 @@ class Database:
         cpm_lb: float | None,
         solver_time: float | None,
         runtime: float | None,
+        var_count: int | None,
+        const_count: int | None,
     ) -> int:
         row = self.get_solution(instance_id, solver, scarcity)
         kwargs = dict(
@@ -519,6 +535,8 @@ class Database:
             cpm_lb=cpm_lb,
             solver_time=solver_time,
             runtime=runtime,
+            var_count=var_count,
+            const_count=const_count,
         )
         if row is None:
             return self.add_solution(**kwargs)
@@ -755,18 +773,55 @@ class Database:
         if dataset is None:
             raise ValueError(f"Dataset {dataset_id} not found")
 
+        instance_ids = [row["id"] for row in self.get_dataset(dataset_id)]
         descriptor = (
             f"{dataset['n_processes']} processes, {dataset['n_instances']} instances"
         )
-        instance_ids = [row["id"] for row in self.get_dataset(dataset_id)]
 
-        footer = "\\end{tabular}\n\\end{table}\n"
-        objective_table = self._latex_table_header(
-            "",
-            "tab:makespan",
-            descriptor,
-            scarcities,
+        def esc(s: str) -> str:
+            return s.replace("_", "\\_").replace("&", "\\&")
+
+        def avg(xs: list[float], digits: int = 1) -> str:
+            return "-" if not xs else f"{sum(xs) / len(xs):.{digits}f}"
+
+        def feasible(sol: sqlite3.Row | None) -> bool:
+            return bool(
+                sol
+                and (
+                    sol["feasible"]
+                    if sol["feasible"] is not None
+                    else sol["solved"]
+                )
+            )
+
+        def runtime(sol: sqlite3.Row) -> float | None:
+            return sol["solver_time"] if sol["solver_time"] is not None else sol["runtime"]
+
+        # Best objective per instance/scarcity over all selected solvers.
+        best: dict[tuple[int, float], float] = {}
+        for iid in instance_ids:
+            for scarcity in scarcities:
+                vals = [
+                    sol["objective_val"]
+                    for model in models
+                    if (sol := self.get_solution(iid, model, scarcity)) is not None
+                    and feasible(sol)
+                    and sol["objective_val"] is not None
+                ]
+                if vals:
+                    best[(iid, scarcity)] = min(vals)
+
+        stats_table = (
+            "\\begin{table}[ht]\n"
+            "\\centering\n"
+            f"\\caption{{Solver statistics ({descriptor}).}}\n"
+            "\\label{tab:solver-statistics}\n"
+            "\\begin{tabular}{|l|r|r|r|r|r|r|}\n"
+            "\\hline\n"
+            "Solver & Feas. & Opt. & Best & Mean time & Mean vars & Mean cons. "
+            "\\\\ \\hline\n"
         )
+
         runtime_table = self._latex_table_header(
             "Mean runtime (s)",
             "tab:runtime",
@@ -775,43 +830,53 @@ class Database:
         )
 
         for model in models:
-            obj_row = model
-            rt_row = model
+            n_feas = n_opt = n_best = 0
+            times: list[float] = []
+            vars_: list[float] = []
+            cons: list[float] = []
+
+            rt_row = esc(model)
 
             for scarcity in scarcities:
-                obj_vals: list[float] = []
-                runtimes: list[float] = []
-                n_missing = 0
+                scarcity_times: list[float] = []
 
                 for iid in instance_ids:
                     sol = self.get_solution(iid, model, scarcity)
-                    info = self._solution_info(sol["sol_file"] if sol else None)
-
-                    if info is None:
-                        n_missing += 1
+                    if sol is None:
                         continue
 
-                    status = info["Status"]
-                    sol_count = info["SolCount"]
-                    if status == GRB.INFEASIBLE or (
-                        sol_count == 0 and status == GRB.TIME_LIMIT
+                    t = runtime(sol)
+                    if t is not None:
+                        times.append(float(t))
+                        scarcity_times.append(float(t))
+
+                    if sol["var_count"] is not None:
+                        vars_.append(float(sol["var_count"]))
+                    if sol["const_count"] is not None:
+                        cons.append(float(sol["const_count"]))
+
+                    if feasible(sol):
+                        n_feas += 1
+                    if sol["optimal"]:
+                        n_opt += 1
+
+                    obj = sol["objective_val"]
+                    if (
+                        feasible(sol)
+                        and obj is not None
+                        and (iid, scarcity) in best
+                        and abs(float(obj) - best[(iid, scarcity)]) <= 1e-6
                     ):
-                        continue
+                        n_best += 1
 
-                    obj_vals.append(float(info["ObjVal"]))
-                    runtimes.append(float(info["Runtime"]))
+                rt_row += f" & {avg(scarcity_times)}"
 
-                if n_missing == len(instance_ids):
-                    obj_row += " & ?"
-                    rt_row += " & ?"
-                elif not obj_vals:
-                    obj_row += " & -"
-                    rt_row += " & -"
-                else:
-                    obj_row += f" & {sum(obj_vals) / len(obj_vals):.0f}"
-                    rt_row += f" & {sum(runtimes) / len(runtimes):.1f}"
-
-            objective_table += obj_row + " \\\\ \\hline\n"
+            stats_table += (
+                f"{esc(model)} & {n_feas} & {n_opt} & {n_best} & "
+                f"{avg(times)} & {avg(vars_, 0)} & {avg(cons, 0)} "
+                "\\\\ \\hline\n"
+            )
             runtime_table += rt_row + " \\\\ \\hline\n"
 
-        return objective_table + footer, runtime_table + footer
+        footer = "\\end{tabular}\n\\end{table}\n"
+        return stats_table + footer, runtime_table + footer

@@ -167,51 +167,85 @@ class GurobiModel(Model):
 
 class CP_SATModel(Model):
     def solve(self):
-        pass
+        self.solver = cp_model.CpSolver()
+        self.solver.parameters.max_time_in_seconds = self.timeout
+
+        if self.silent:
+            self.solver.parameters.log_search_progress = False
+            self.solver.parameters.log_to_stdout = False
+        else:
+            self.solver.parameters.log_search_progress = True
+            self.solver.parameters.log_to_stdout = True
+
+        self._status = self.solver.Solve(self.model)
+        return self._status
 
     def update(self):
         pass
 
     def is_feasible(self):
-        pass
+        if not hasattr(self, "_status"):
+            return False
+        return self._status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
 
     def is_optimal(self):
-        pass
+        if not hasattr(self, "_status"):
+            return False
+        return self._status == cp_model.OPTIMAL
 
     def get_objective(self):
-        pass
+        if not self.is_feasible():
+            return None
+        return self.solver.ObjectiveValue() * self.divisor
 
     def write(self, filename: str) -> None:
-        pass
+        self.model.ExportToFile(filename)
 
     def is_timed_out(self):
-        pass
+        if not hasattr(self, "_status"):
+            return False
+        return self._status == cp_model.UNKNOWN and self.sol_count() == 0
 
     def sol_count(self):
-        pass
+        return 1 if self.is_feasible() else 0
 
     def interrupted(self):
-        pass
-
-    def visualize(self, filename: str) -> None:
-        pass
+        if not hasattr(self, "_status"):
+            return False
+        return self._status == cp_model.UNKNOWN
 
     def solver_time(self):
-        pass
+        if not hasattr(self, "solver"):
+            return None
+        return self.solver.WallTime()
 
     def lower_bound(self):
-        pass
+        if not hasattr(self, "solver"):
+            return None
+        return self.solver.BestObjectiveBound() * self.divisor
 
     def status(self):
-        pass
+        if not hasattr(self, "_status"):
+            return None
+        if self._status == cp_model.OPTIMAL:
+            return GRB.OPTIMAL
+        elif self._status == cp_model.FEASIBLE:
+            return GRB.FEASIBLE
+        elif self._status == cp_model.INFEASIBLE:
+            return GRB.INFEASIBLE
+        elif self._status == cp_model.UNKNOWN:
+            if hasattr(self, "solver") and self.solver.WallTime() >= self.timeout:
+                return GRB.TIME_LIMIT
+            return GRB.INTERRUPTED
+        return None
 
     def number_of_variables(self):
-        pass
+        return len(self.model.Proto().variables)
 
     def number_of_constraints(self):
-        pass
+        return len(self.model.Proto().constraints)
 
     def number_of_nonzeros(self):
-        pass
+        return 0
 
 

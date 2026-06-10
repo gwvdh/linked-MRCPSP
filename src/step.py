@@ -27,8 +27,8 @@ class StepModel(GurobiModel):
         if self.obj == "makespan":
             self.model.setObjective(gp.quicksum(t * (self.z[self.n-1, m, t] - self.z[self.n-1, m, t-1]) for t in range(1,self.T) for m in range(self.M[self.n-1])), GRB.MINIMIZE)
         elif self.obj == "flow-time":
-            #self.model.setObjective(gp.quicksum((self.z[i, m, t] - self.z[i, m, t-1]) * (t + self.p[i][m] - self.ES[i]) if t > 0 else (self.z[i, m, t]) * (t + self.p[i][m] - self.ES[i]) for i in range(self.n) for m in range(self.M[i]) for t in z_t[i]), GRB.MINIMIZE)
-            self.model.setObjective(gp.quicksum(self.p[i][m] + gp.quicksum(1 - (self.z[i, m, t]) for t in z_t[i]) for i in range(self.n) for m in range(self.M[i])), GRB.MINIMIZE)
+            self.model.setObjective(gp.quicksum((self.z[i, m, t] - self.z[i, m, t-1]) * (t + self.p[i][m] - self.ES[i]) if t > 0 else (self.z[i, m, t]) * (t + self.p[i][m] - self.ES[i]) for i in range(self.n) for m in range(self.M[i]) for t in z_t[i]), GRB.MINIMIZE)
+            #self.model.setObjective(gp.quicksum(self.p[i][m] + gp.quicksum(1 - (self.z[i, m, t]) for t in z_t[i]) for i in range(self.n) for m in range(self.M[i])), GRB.MINIMIZE)
         elif self.obj == "process-flow-time":
             self.model.setObjective(gp.quicksum((self.z[i, m, t] - (self.z[i, m, t-1] if t > 0 else 0)) * (t + self.p[i][m] - self.ES[i]) for i in self.O for m in range(self.M[i]) for t in z_t[i]), GRB.MINIMIZE)
 
@@ -83,8 +83,8 @@ class StepModelDisaggregated(GurobiModel):
         if self.obj == "makespan":
             self.model.setObjective(gp.quicksum(t * (self.z[self.n-1, m, t] - self.z[self.n-1, m, t-1]) for t in range(1,self.T) for m in range(self.M[self.n-1])), GRB.MINIMIZE)
         elif self.obj == "flow-time":
-            #model.setObjective(gp.quicksum((self.z[i, m, t] - self.z[i, m, t-1]) * (t + self.p[i][m] - self.ES[i]) if t > 0 else (self.z[i, m, t]) * (t + self.p[i][m] - self.ES[i]) for i in range(self.n) for m in range(self.M[i]) for t in z_t[i]), GRB.MINIMIZE)
-            self.model.setObjective(gp.quicksum(self.p[i][m] + gp.quicksum(1 - (self.z[i, m, t]) for t in z_t[i]) for i in range(self.n) for m in range(self.M[i])), GRB.MINIMIZE)
+            self.model.setObjective(gp.quicksum((self.z[i, m, t] - self.z[i, m, t-1]) * (t + self.p[i][m] - self.ES[i]) if t > 0 else (self.z[i, m, t]) * (t + self.p[i][m] - self.ES[i]) for i in range(self.n) for m in range(self.M[i]) for t in z_t[i]), GRB.MINIMIZE)
+            #self.model.setObjective(gp.quicksum(self.p[i][m] + gp.quicksum(1 - (self.z[i, m, t]) for t in z_t[i]) for i in range(self.n) for m in range(self.M[i])), GRB.MINIMIZE)
         elif self.obj == "process-flow-time":
             self.model.setObjective(gp.quicksum((self.z[i, m, t] - (self.z[i, m, t-1] if t > 0 else 0)) * (t + self.p[i][m] - self.ES[i]) for i in self.O for m in range(self.M[i]) for t in z_t[i]), GRB.MINIMIZE)
 
