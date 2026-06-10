@@ -1,199 +1,228 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
-from collections import defaultdict
 import random
-import numpy as np
+from collections import defaultdict
+from typing import Any, Optional
 
-from .generator import get_capacity, _make_phase_timelines, _active_phases
-from .definitions import Process, NetworkType
-from .xml_parser import RA_PST
+from .definitions import Process
+from .generator import active_phases, get_capacity, make_phase_timelines
+
+PhaseTimeline = dict[int, dict[int, int]]
 
 
 def greedy_schedule(
-    processes: List[Process],
+    processes: list[Process],
     max_phases: int,
-    capacities: List[int, int],
-) -> tuple[List[PhaseTimeline], int]:
-    """ Schedule processes greedily, starting with the earliest start time. """
-    phase_timelines = _make_phase_timelines(max_phases)
-    resource_usage: Dict[int, Dict[int, int]] = defaultdict(lambda: defaultdict(int))
-    upper_bound = sum(process.max_processing_time() for process in processes)
+    capacities: dict[int, int],
+) -> tuple[list[PhaseTimeline], int]:
+    """
+    Greedy earliest-start schedule subject to renewable resource capacities.
+    """
+    phase_timelines = make_phase_timelines(max_phases)
+    usage: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+
+    horizon_ub = sum(p.max_processing_time() for p in processes) + 1
     makespan = 0
+
     for process in processes:
         modes = [
             random.randrange(process.phases[i].number_of_modes)
             for i in range(len(process.phases))
         ]
-        phase_end: List[int] = []
-        for i in range(_active_phases(process.network_type)):
-            predecessors = process.network_type.value[i]
+
+        phase_end: list[int] = []
+
+        for phase_idx in range(active_phases(process.network_type)):
+            predecessors = process.network_type.value[phase_idx]
             t = process.start_time if not predecessors else max(phase_end[p] for p in predecessors)
-            for task in process.tasks[i]:
-                if task is None: continue
-                dur, res = task.duration[modes[i]], task.resource[modes[i]]
-                if res is not None:
-                    cap = capacities.get(res, float("inf"))
-                    while any(resource_usage[t + dt][res] >= cap for dt in range(dur)):
+
+            for task in process.tasks[phase_idx]:
+                duration = task.duration[modes[phase_idx]]
+                resource = task.resource[modes[phase_idx]]
+
+                if resource is not None:
+                    cap = capacities.get(resource, float("inf"))
+                    while any(usage[t + dt][resource] >= cap for dt in range(duration)):
                         t += 1
-                        if t > upper_bound: break
-                    for dt in range(dur):
-                        resource_usage[t + dt][res] += 1
-                        phase_timelines[i][t + dt][res] += 1
-                t += dur
+                        if t > horizon_ub:
+                            break
+
+                    for dt in range(duration):
+                        usage[t + dt][resource] += 1
+                        phase_timelines[phase_idx][t + dt][resource] += 1
+
+                t += duration
+
             phase_end.append(t)
-        if phase_end: 
+
+        if phase_end:
             makespan = max(makespan, max(phase_end))
+
     return [dict(sorted(tl.items())) for tl in phase_timelines], makespan
 
 
-def get_max_T(processes: List[Process], max_phases: int, capacities: Dict[int, int], k: int = 10) -> int:
-    """ Return the minimum makespan over k greedy schedules. """
-    max_T = float("inf")
-    for _ in range(k):
+def estimate_time_horizon(
+    processes: list[Process],
+    max_phases: int,
+    capacities: dict[int, int],
+    trials: int = 20,
+) -> int:
+    """
+    Estimate a feasible horizon by repeated greedy schedules.
+    """
+    best = sum(p.max_processing_time() for p in processes) + 1
+    for _ in range(trials):
         _, makespan = greedy_schedule(processes, max_phases, capacities)
-        max_T = min(max_T, makespan+1)
-    print(f"Max T = {max_T}")
-    return max_T
+        best = min(best, makespan + 1)
+    print(f"Estimated T = {best}")
+    return best
 
 
 def get_or_instance(
-    processes: List[Process],
+    processes: list[Process],
     scarcity: float,
     max_start_time: int,
     n_resources: int,
-    min_max: List[Tuple[int, int]],  # per resource, shared across phases
+    min_max: list[tuple[int, int]],
     max_phases: int = 3,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
-    Translate generated processes into an OR instance.
-
-    Resources are shared across all phases: R[r] is the single capacity for
-    resource r regardless of which phase a task belongs to.
-
-    Returns a dict with keys: n, T, M, R, E, L, p, r, O, ES, VP.
+    Build an OR instance with:
+      n   number of jobs including source and sink
+      T   time horizon
+      M   number of modes per job
+      R   resource capacities
+      E   precedence arcs
+      L   linked-mode arcs
+      p   processing times
+      r   resource requirements
+      O   last real job per process
+      ES  earliest start times
+      LS  latest start times
+      VP  incomparable job pairs
     """
-    assert len(min_max) == n_resources, (
-        f"Expected {n_resources} (min, max) pairs, got {len(min_max)}"
+    if len(min_max) != n_resources:
+        raise ValueError(
+            f"Expected {n_resources} (min, max) pairs, got {len(min_max)}"
+        )
+
+    capacities = [get_capacity(mn, mx, scarcity) for mn, mx in min_max]
+    print(f"Capacities: {capacities}")
+
+    max_start_time = estimate_time_horizon(
+        processes=processes,
+        max_phases=max_phases,
+        capacities={r: capacities[r] for r in range(n_resources)},
+        trials=100,
     )
 
-    # Single capacity vector — one entry per resource, shared across all phases.
-    R: List[int] = [get_capacity(mn, mx, scarcity) for mn, mx in min_max]
-    print(f"Capacities: {R}")
-    total_resources = n_resources
-
-    max_start_time = get_max_T(processes, max_phases, {r: R[r] for r in range(n_resources)}, k=100)
-
-    def _zero_p(n_modes: int) -> List[int]:
+    def zero_p(n_modes: int) -> list[int]:
         return [0] * n_modes
 
-    def _zero_r(n_modes: int) -> List[List[int]]:
-        return [[0] * total_resources for _ in range(n_modes)]
+    def zero_r(n_modes: int) -> list[list[int]]:
+        return [[0] * n_resources for _ in range(n_modes)]
 
-    job_idx = 1  # next job index to assign
-    p: List[List[int]] = [_zero_p(1)]
-    r: List[List[List[int]]] = [_zero_r(1)]
-    M: List[int] = [1]
-    ES: List[int] = [0]
-    E: List[List[int]] = []  # precedence pairs [i, j]  (i before j)
-    L: List[List[int]] = []  # linked-mode pairs
-    O: List[int] = []  # last real job of each process
+    source = 0
+    next_job = 1
+
+    p: list[list[int]] = [zero_p(1)]
+    r: list[list[list[int]]] = [zero_r(1)]
+    M: list[int] = [1]
+    ES: list[int] = [0]
+    E: list[list[int]] = []
+    L: list[list[int]] = []
+    O: list[int] = []
 
     for process in processes:
-        n_active = len(process.network_type.value)
-        phase_last: List[Optional[int]] = [None] * n_active
+        n_active = active_phases(process.network_type)
+        phase_last: list[Optional[int]] = [None] * n_active
 
-        for i in range(n_active):
-            phase_tasks = process.tasks[i]
-            n_tasks_in_phase = len(phase_tasks)
-            # Modes are per-process per-phase: different processes may use
-            # different RA-PSTs for the same phase index.
-            M_i = process.phases[i].number_of_modes
+        for phase_idx in range(n_active):
+            phase_tasks = process.tasks[phase_idx]
+            n_modes = process.phases[phase_idx].number_of_modes
 
-            for j, task in enumerate(phase_tasks):
-                # ---- precedence edges --------------------------------- #
-                if j == 0:
-                    preds = process.network_type.value[i]
-                    if not preds:
-                        E.append([0, job_idx])
+            for task_idx, task in enumerate(phase_tasks):
+                current = next_job
+
+                if task_idx == 0:
+                    predecessors = process.network_type.value[phase_idx]
+                    if not predecessors:
+                        E.append([source, current])
                     else:
-                        for pred_phase in preds:
-                            if phase_last[pred_phase] is not None:
-                                E.append([phase_last[pred_phase], job_idx])
+                        for pred_phase in predecessors:
+                            pred_last = phase_last[pred_phase]
+                            if pred_last is not None:
+                                E.append([pred_last, current])
                 else:
-                    E.append([job_idx - 1, job_idx])
+                    E.append([current - 1, current])
 
-                # ---- linked-mode pairs -------------------------------- #
-                if j > 0:
-                    L.append([job_idx - 1, job_idx])
+                if task_idx > 0:
+                    L.append([current - 1, current])
 
-                # ---- processing times & resource requirements --------- #
-                p.append(_zero_p(M_i))
-                r.append(_zero_r(M_i))
-                M.append(M_i)
-                for m in range(M_i):
-                    p[job_idx][m] = task.duration[m]
-                    res_idx: Optional[int] = task.resource[m]
-                    if res_idx is not None:
-                        r[job_idx][m][res_idx] = 1
-
+                p.append(zero_p(n_modes))
+                r.append(zero_r(n_modes))
+                M.append(n_modes)
                 ES.append(process.start_time)
 
-                if j == n_tasks_in_phase - 1:
-                    phase_last[i] = job_idx
+                for m in range(n_modes):
+                    p[current][m] = task.duration[m]
+                    res = task.resource[m]
+                    if res is not None:
+                        r[current][m][res] = 1
 
-                job_idx += 1
+                if task_idx == len(phase_tasks) - 1:
+                    phase_last[phase_idx] = current
 
-        last_phase = n_active - 1
-        if phase_last[last_phase] is not None:
-            O.append(phase_last[last_phase])
+                next_job += 1
 
-    # Sink dummy job
-    sink = job_idx
-    p.append(_zero_p(1))
-    r.append(_zero_r(1))
+        final_phase = n_active - 1
+        if phase_last[final_phase] is not None:
+            O.append(phase_last[final_phase])
+
+    sink = next_job
+    p.append(zero_p(1))
+    r.append(zero_r(1))
     M.append(1)
     ES.append(0)
+
     for last_job in O:
         E.append([last_job, sink])
+
     n = sink + 1
 
-    # Transitive closure of precedence relations
-    adj: Dict[int, set] = {i: set() for i in range(n)}
+    # Transitive closure
+    adj: dict[int, set[int]] = {i: set() for i in range(n)}
     for i, j in E:
         adj[i].add(j)
+
     for k in range(n):
         for i in range(n):
             if k in adj[i]:
                 adj[i] |= adj[k]
+
     TE = [[i, j] for i in range(n) for j in adj[i]]
 
-    # Earliest start times
+    # Earliest start bounds
     for i in range(n):
         for k in range(n):
             if i in adj[k]:
                 ES[i] = max(ES[i], ES[k] + min(p[k]))
 
-    # Latest start times
-    LS = [int(max_start_time)-1] * n
-    for i in range(n-1, -1, -1):
+    # Latest start bounds
+    LS = [int(max_start_time) - 1] * n
+    for i in range(n - 1, -1, -1):
         for k in range(n):
             if k in adj[i]:
                 LS[i] = min(LS[i], LS[k] - min(p[i]))
 
-    e_set = {(a, b) for a, b in TE} | {(b, a) for a, b in TE}
-    VP = [
-        [i, j]
-        for i in range(n)
-        for j in range(n)
-        if i != j and (i, j) not in e_set
-    ]
+    comparable = {(i, j) for i, j in TE} | {(j, i) for i, j in TE}
+    VP = [[i, j] for i in range(n) for j in range(n) if i != j and (i, j) not in comparable]
 
     return {
         "n": n,
         "T": int(max_start_time),
         "M": M,
-        "R": R,
+        "R": capacities,
         "E": E,
         "L": L,
         "p": p,

@@ -1,15 +1,36 @@
-import sqlite3
+from __future__ import annotations
+
 import json
+import sqlite3
+from typing import Any, Optional
+
 from gurobipy import GRB
 
 
 class Database:
     def __init__(self, filename: str):
         self.filename = filename
-        self.conn = sqlite3.connect(self.filename)
-        self.conn.row_factory = sqlite3.Row  # column access by name
-        self.cursor = self.conn.cursor()
-        self.cursor.execute(
+        self.conn = sqlite3.connect(filename)
+        self.conn.row_factory = sqlite3.Row
+        self.cur = self.conn.cursor()
+        self._create_tables()
+        self._migrate()
+
+    def __enter__(self) -> "Database":
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self.conn.close()
+
+    # ------------------------------------------------------------------
+    # Schema
+    # ------------------------------------------------------------------
+
+    def _create_tables(self) -> None:
+        self.cur.execute(
             """
             CREATE TABLE IF NOT EXISTS instances (
                 id                    INTEGER PRIMARY KEY,
@@ -24,11 +45,35 @@ class Database:
                 resource_ratio_spread REAL,
                 timeout               INTEGER,
                 n_resources           INTEGER,
-                processes_file        TEXT
+                processes_file        TEXT,
+                seed                  INTEGER,
+                xml_files             TEXT,
+                global_resource_ids   TEXT,
+                generator_version     TEXT,
+                generation_metadata   TEXT
             )
             """
         )
-        self.cursor.execute(
+
+        self.cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scenarios (
+                id            INTEGER PRIMARY KEY,
+                instance_id   INTEGER NOT NULL,
+                scarcity      REAL NOT NULL,
+                instance_file TEXT,
+                T             INTEGER,
+                n_jobs        INTEGER,
+                n_resources   INTEGER,
+                capacities    TEXT,
+                descriptors   TEXT,
+                UNIQUE (instance_id, scarcity),
+                FOREIGN KEY (instance_id) REFERENCES instances (id)
+            )
+            """
+        )
+
+        self.cur.execute(
             """
             CREATE TABLE IF NOT EXISTS solution (
                 id             INTEGER PRIMARY KEY,
@@ -41,42 +86,86 @@ class Database:
                 solved         BOOLEAN,
                 status         TEXT,
                 objective      TEXT,
-                objective_val  REAL
+                objective_val  REAL,
+                scenario_id    INTEGER,
+                finished       BOOLEAN,
+                feasible       BOOLEAN,
+                optimal        BOOLEAN,
+                lower_bound    REAL,
+                cpm_lb         REAL,
+                solver_time    REAL,
+                runtime        REAL,
+                var_count      INTEGER,
+                const_count    INTEGER,
+                FOREIGN KEY (scenario_id) REFERENCES scenarios (id)
             )
             """
         )
-        self.cursor.execute(
+
+        self.cur.execute(
             """
-                CREATE TABLE IF NOT EXISTS datasets (
-                    id            INTEGER PRIMARY KEY,
-                    name          TEXT,
-                    description   TEXT,
-                    n_processes   INTEGER,
-                    n_instances   INTEGER
-                )
-            """
-        )
-        self.cursor.execute(
-            """
-                CREATE TABLE IF NOT EXISTS instance_dataset (
-                    id            INTEGER PRIMARY KEY,
-                    instance_id   INTEGER,
-                    dataset_id    INTEGER,
-                    FOREIGN KEY (instance_id) REFERENCES instances (id),
-                    FOREIGN KEY (dataset_id) REFERENCES datasets (id)
-                )
+            CREATE TABLE IF NOT EXISTS datasets (
+                id            INTEGER PRIMARY KEY,
+                name          TEXT,
+                description   TEXT,
+                n_processes   INTEGER,
+                n_instances   INTEGER
+            )
             """
         )
+
+        self.cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS instance_dataset (
+                id            INTEGER PRIMARY KEY,
+                instance_id   INTEGER,
+                dataset_id    INTEGER,
+                FOREIGN KEY (instance_id) REFERENCES instances (id),
+                FOREIGN KEY (dataset_id) REFERENCES datasets (id),
+                UNIQUE (instance_id, dataset_id)
+            )
+            """
+        )
+
         self.conn.commit()
 
-    def __enter__(self):
-        return self
+    def _table_columns(self, table: str) -> set[str]:
+        self.cur.execute(f"PRAGMA table_info({table})")
+        return {row["name"] for row in self.cur.fetchall()}
 
-    def __exit__(self, *args):
-        self.conn.close()
+    def _add_column_if_missing(self, table: str, column: str, definition: str) -> None:
+        if column not in self._table_columns(table):
+            self.cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
-    def close(self):
-        self.conn.close()
+    def _migrate(self) -> None:
+        for col, definition in {
+            "seed": "INTEGER",
+            "xml_files": "TEXT",
+            "global_resource_ids": "TEXT",
+            "generator_version": "TEXT",
+            "generation_metadata": "TEXT",
+        }.items():
+            self._add_column_if_missing("instances", col, definition)
+
+        for col, definition in {
+            "scenario_id": "INTEGER",
+            "finished": "BOOLEAN",
+            "feasible": "BOOLEAN",
+            "optimal": "BOOLEAN",
+            "lower_bound": "REAL",
+            "cpm_lb": "REAL",
+            "solver_time": "REAL",
+            "runtime": "REAL",
+        }.items():
+            self._add_column_if_missing("solution", col, definition)
+
+        for col, definition in {
+            "n_jobs": "INTEGER",
+            "n_resources": "INTEGER",
+        }.items():
+            self._add_column_if_missing("scenarios", col, definition)
+
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     # Instances
@@ -96,8 +185,13 @@ class Database:
         timeout: int,
         n_resources: int = 0,
         processes_file: str = "",
+        seed: Optional[int] = None,
+        xml_files: Optional[list[str | list[str]]] = None,
+        global_resource_ids: Optional[list[str]] = None,
+        generator_version: str = "v2",
+        generation_metadata: Optional[dict[str, Any]] = None,
     ) -> int:
-        self.cursor.execute(
+        self.cur.execute(
             """
             INSERT INTO instances (
                 number_of_processes,
@@ -111,9 +205,14 @@ class Database:
                 resource_ratio_spread,
                 timeout,
                 n_resources,
-                processes_file
+                processes_file,
+                seed,
+                xml_files,
+                global_resource_ids,
+                generator_version,
+                generation_metadata
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 number_of_processes,
@@ -128,27 +227,98 @@ class Database:
                 timeout,
                 n_resources,
                 processes_file,
+                seed,
+                json.dumps(xml_files),
+                json.dumps(global_resource_ids),
+                generator_version,
+                json.dumps(generation_metadata or {}),
             ),
         )
         self.conn.commit()
-        return self.cursor.lastrowid
+        return int(self.cur.lastrowid)
 
-    def update_instance_processes_file(
-        self, id: int, processes_file: str
-    ) -> None:
-        self.cursor.execute(
+    def update_instance_processes_file(self, instance_id: int, processes_file: str) -> None:
+        self.cur.execute(
             "UPDATE instances SET processes_file = ? WHERE id = ?",
-            (processes_file, id),
+            (processes_file, instance_id),
         )
         self.conn.commit()
 
-    def get_instance(self, id: int) -> sqlite3.Row | None:
-        self.cursor.execute("SELECT * FROM instances WHERE id = ?", (id,))
-        return self.cursor.fetchone()
+    def get_instance(self, instance_id: int) -> sqlite3.Row | None:
+        self.cur.execute("SELECT * FROM instances WHERE id = ?", (instance_id,))
+        return self.cur.fetchone()
 
     def get_instances(self) -> list[sqlite3.Row]:
-        self.cursor.execute("SELECT * FROM instances")
-        return self.cursor.fetchall()
+        self.cur.execute("SELECT * FROM instances")
+        return self.cur.fetchall()
+
+    # ------------------------------------------------------------------
+    # Scenarios
+    # ------------------------------------------------------------------
+
+    def upsert_scenario(
+        self,
+        instance_id: int,
+        scarcity: float,
+        instance_file: str,
+        T: int,
+        n_jobs: int,
+        n_resources: int,
+        capacities: list[int],
+        descriptors: Optional[dict[str, Any]] = None,
+    ) -> int:
+        self.cur.execute(
+            """
+            INSERT INTO scenarios (
+                instance_id,
+                scarcity,
+                instance_file,
+                T,
+                n_jobs,
+                n_resources,
+                capacities,
+                descriptors
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(instance_id, scarcity)
+            DO UPDATE SET
+                instance_file = excluded.instance_file,
+                T             = excluded.T,
+                n_jobs        = excluded.n_jobs,
+                n_resources   = excluded.n_resources,
+                capacities    = excluded.capacities,
+                descriptors   = excluded.descriptors
+            """,
+            (
+                instance_id,
+                scarcity,
+                instance_file,
+                T,
+                n_jobs,
+                n_resources,
+                json.dumps(capacities),
+                json.dumps(descriptors or {}),
+            ),
+        )
+        self.conn.commit()
+        row = self.get_scenario(instance_id, scarcity)
+        if row is None:
+            raise RuntimeError("Failed to create or update scenario")
+        return int(row["id"])
+
+    def get_scenario(self, instance_id: int, scarcity: float) -> sqlite3.Row | None:
+        self.cur.execute(
+            """
+            SELECT * FROM scenarios
+            WHERE instance_id = ? AND scarcity = ?
+            """,
+            (instance_id, scarcity),
+        )
+        return self.cur.fetchone()
+
+    def get_scenario_by_id(self, scenario_id: int) -> sqlite3.Row | None:
+        self.cur.execute("SELECT * FROM scenarios WHERE id = ?", (scenario_id,))
+        return self.cur.fetchone()
 
     # ------------------------------------------------------------------
     # Solutions
@@ -166,8 +336,18 @@ class Database:
         status: str,
         objective: str,
         objective_val: float | None,
+        scenario_id: int | None = None,
+        finished: bool | None = None,
+        feasible: bool | None = None,
+        optimal: bool | None = None,
+        lower_bound: float | None = None,
+        cpm_lb: float | None = None,
+        solver_time: float | None = None,
+        runtime: float | None = None,
+        var_count: int | None = None,
+        const_count: int | None = None,
     ) -> int:
-        self.cursor.execute(
+        self.cur.execute(
             """
             INSERT INTO solution (
                 instance_id,
@@ -179,9 +359,19 @@ class Database:
                 solved,
                 status,
                 objective,
-                objective_val
+                objective_val,
+                scenario_id,
+                finished,
+                feasible,
+                optimal,
+                lower_bound,
+                cpm_lb,
+                solver_time,
+                runtime,
+                var_count,
+                const_count,
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 instance_id,
@@ -194,25 +384,45 @@ class Database:
                 status,
                 objective,
                 objective_val,
+                scenario_id,
+                finished,
+                feasible,
+                optimal,
+                lower_bound,
+                cpm_lb,
+                solver_time,
+                runtime,
+                var_count,
+                const_count,
             ),
         )
         self.conn.commit()
-        return self.cursor.lastrowid
+        return int(self.cur.lastrowid)
 
     def update_solution(
         self,
         instance_id: int,
         solver: str,
+        scarcity: float,
         sol_file: str,
         instance_file: str,
-        scarcity: float,
         divisor: int,
         solved: bool,
         status: str,
         objective: str,
         objective_val: float | None,
-    ) -> int:
-        self.cursor.execute(
+        scenario_id: int | None = None,
+        finished: bool | None = None,
+        feasible: bool | None = None,
+        optimal: bool | None = None,
+        lower_bound: float | None = None,
+        cpm_lb: float | None = None,
+        solver_time: float | None = None,
+        runtime: float | None = None,
+        var_count: int | None = None,
+        const_count: int | None = None,
+    ) -> None:
+        self.cur.execute(
             """
             UPDATE solution
             SET
@@ -222,7 +432,17 @@ class Database:
                 solved        = ?,
                 status        = ?,
                 objective     = ?,
-                objective_val = ?
+                objective_val = ?,
+                scenario_id   = ?,
+                finished      = ?,
+                feasible      = ?,
+                optimal       = ?,
+                lower_bound   = ?,
+                cpm_lb        = ?,
+                solver_time   = ?,
+                runtime       = ?,
+                var_count     = ?,
+                const_count   = ?
             WHERE instance_id = ? AND solver = ? AND scarcity = ?
             """,
             (
@@ -233,68 +453,135 @@ class Database:
                 status,
                 objective,
                 objective_val,
+                scenario_id,
+                finished,
+                feasible,
+                optimal,
+                lower_bound,
+                cpm_lb,
+                solver_time,
+                runtime,
+                var_count,
+                const_count,
                 instance_id,
                 solver,
                 scarcity,
             ),
         )
         self.conn.commit()
-        return self.cursor.lastrowid
 
     def get_solution(
-        self, instance_id: int, model_name: str, scarcity: float
+        self,
+        instance_id: int,
+        solver: str,
+        scarcity: float,
     ) -> sqlite3.Row | None:
-        self.cursor.execute(
+        self.cur.execute(
             """
             SELECT * FROM solution
             WHERE instance_id = ? AND solver = ? AND scarcity = ?
             """,
-            (instance_id, model_name, scarcity),
+            (instance_id, solver, scarcity),
         )
-        return self.cursor.fetchone()
+        return self.cur.fetchone()
 
     def get_solutions(self, instance_id: int) -> list[sqlite3.Row]:
-        self.cursor.execute(
-            "SELECT * FROM solution WHERE instance_id = ?", (instance_id,)
+        self.cur.execute(
+            "SELECT * FROM solution WHERE instance_id = ?",
+            (instance_id,),
         )
-        return self.cursor.fetchall()
+        return self.cur.fetchall()
+
+    def record_solution(
+        self,
+        *,
+        instance_id: int,
+        scenario_id: int | None,
+        solver: str,
+        sol_file: str,
+        instance_file: str,
+        scarcity: float,
+        divisor: int,
+        objective: str,
+        status: int,
+        finished: bool,
+        feasible: bool,
+        optimal: bool,
+        objective_val: float | None,
+        lower_bound: float | None,
+        cpm_lb: float | None,
+        solver_time: float | None,
+        runtime: float | None,
+        var_count: int | None,
+        const_count: int | None,
+    ) -> int:
+        row = self.get_solution(instance_id, solver, scarcity)
+        kwargs = dict(
+            instance_id=instance_id,
+            solver=solver,
+            sol_file=sol_file,
+            instance_file=instance_file,
+            scarcity=scarcity,
+            divisor=divisor,
+            solved=feasible,
+            status=str(status),
+            objective=objective,
+            objective_val=objective_val,
+            scenario_id=scenario_id,
+            finished=finished,
+            feasible=feasible,
+            optimal=optimal,
+            lower_bound=lower_bound,
+            cpm_lb=cpm_lb,
+            solver_time=solver_time,
+            runtime=runtime,
+            var_count=var_count,
+            const_count=const_count,
+        )
+        if row is None:
+            return self.add_solution(**kwargs)
+        self.update_solution(**kwargs)
+        return int(row["id"])
 
     def create_pending_solution(
-        self, instance_id: int, solver: str, scarcity: float, objective:str
+        self,
+        instance_id: int,
+        solver: str,
+        scarcity: float,
+        objective: str,
     ) -> int:
-        self.cursor.execute(
+        row = self.get_solution(instance_id, solver, scarcity)
+        if row is not None:
+            return int(row["id"])
+
+        self.cur.execute(
             """
-            INSERT INTO solution (instance_id, solver, scarcity, objective, solved)
+            INSERT INTO solution (
+                instance_id,
+                solver,
+                scarcity,
+                objective,
+                solved
+            )
             VALUES (?, ?, ?, ?, 0)
             """,
             (instance_id, solver, scarcity, objective),
         )
         self.conn.commit()
-        return self.cursor.lastrowid
+        return int(self.cur.lastrowid)
 
-    def get_unsolved_solutions_for_dataset(
-        self, dataset_id: int
-    ) -> list[sqlite3.Row]:
-        self.cursor.execute(
-            """
-            SELECT solution.* FROM solution
-            INNER JOIN instance_dataset ON solution.instance_id = instance_dataset.instance_id
-            WHERE instance_dataset.dataset_id = ? AND NOT solution.solved
-            """,
-            (dataset_id,),
-        )
-        return self.cursor.fetchall()
+    # ------------------------------------------------------------------
+    # Datasets
+    # ------------------------------------------------------------------
 
-    def get_datasets(self) -> list[sqlite3.Row]:
-        self.cursor.execute("SELECT * FROM datasets")
-        return self.cursor.fetchall()
-
-    def get_dataset(self, id: int) -> list[sqlite3.Row]:
-        self.cursor.execute("SELECT * FROM instances INNER JOIN instance_dataset ON instances.id = instance_dataset.instance_id WHERE instance_dataset.dataset_id = ?", (id,))
-        return self.cursor.fetchall()
-
-    def add_dataset(self, name: str, description: str, n_processes: int, n_instances: int) -> int:
-        self.cursor.execute(
+    def add_dataset(
+        self,
+        name: str,
+        description: str,
+        n_processes: int,
+        n_instances: int,
+    ) -> int:
+        self.cur.execute(
             """
             INSERT INTO datasets (
                 name,
@@ -307,147 +594,289 @@ class Database:
             (name, description, n_processes, n_instances),
         )
         self.conn.commit()
-        return self.cursor.lastrowid
+        return int(self.cur.lastrowid)
+
+    def get_datasets(self) -> list[sqlite3.Row]:
+        self.cur.execute("SELECT * FROM datasets")
+        return self.cur.fetchall()
+
+    def get_dataset(self, dataset_id: int) -> list[sqlite3.Row]:
+        self.cur.execute(
+            """
+            SELECT instances.*
+            FROM instances
+            INNER JOIN instance_dataset
+                ON instances.id = instance_dataset.instance_id
+            WHERE instance_dataset.dataset_id = ?
+            """,
+            (dataset_id,),
+        )
+        return self.cur.fetchall()
 
     def add_instance_to_dataset(self, instance_id: int, dataset_id: int) -> None:
-        # Check if the connection exists
-        self.cursor.execute("SELECT * FROM instance_dataset WHERE instance_id = ? AND dataset_id = ?", (instance_id, dataset_id))
-        if self.cursor.fetchone() is not None:
-            raise ValueError(f"Instance {instance_id} already in dataset {dataset_id}")
-        # Check if the instance exists
-        self.cursor.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
-        dataset = self.cursor.fetchone()
+        self.cur.execute(
+            """
+            SELECT * FROM instance_dataset
+            WHERE instance_id = ? AND dataset_id = ?
+            """,
+            (instance_id, dataset_id),
+        )
+        if self.cur.fetchone() is not None:
+            raise ValueError(
+                f"Instance {instance_id} is already contained in dataset {dataset_id}"
+            )
+
+        self.cur.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+        dataset = self.cur.fetchone()
         if dataset is None:
             raise ValueError(f"Dataset {dataset_id} not found")
-        number_of_required_processes = dataset["n_processes"]
 
-        self.cursor.execute("SELECT * FROM instances WHERE id = ?", (instance_id,))
-        instance = self.cursor.fetchone()
+        self.cur.execute("SELECT * FROM instances WHERE id = ?", (instance_id,))
+        instance = self.cur.fetchone()
         if instance is None:
             raise ValueError(f"Instance {instance_id} not found")
-        if instance["number_of_processes"] != number_of_required_processes:
-            raise ValueError(f"Instance {instance_id} has {instance['number_of_processes']} processes, but dataset {dataset_id} requires {number_of_required_processes} processes")
-        self.cursor.execute(
-            "INSERT INTO instance_dataset (instance_id, dataset_id) VALUES (?, ?)",
+
+        if instance["number_of_processes"] != dataset["n_processes"]:
+            raise ValueError(
+                f"Instance {instance_id} has {instance['number_of_processes']} "
+                f"processes, dataset requires {dataset['n_processes']}"
+            )
+
+        self.cur.execute(
+            """
+            INSERT INTO instance_dataset (instance_id, dataset_id)
+            VALUES (?, ?)
+            """,
             (instance_id, dataset_id),
         )
         self.conn.commit()
 
     def get_all_instance_to_dataset(self) -> list[sqlite3.Row]:
-        self.cursor.execute(
-            "SELECT * FROM instance_dataset"
+        self.cur.execute("SELECT * FROM instance_dataset")
+        return self.cur.fetchall()
+
+    def get_unsolved_solutions_for_dataset(self, dataset_id: int) -> list[sqlite3.Row]:
+        self.cur.execute(
+            """
+            SELECT solution.*
+            FROM solution
+            INNER JOIN instance_dataset
+                ON solution.instance_id = instance_dataset.instance_id
+            WHERE instance_dataset.dataset_id = ? AND NOT solution.solved
+            """,
+            (dataset_id,),
         )
-        return self.cursor.fetchall()
+        return self.cur.fetchall()
+
+    # ------------------------------------------------------------------
+    # LaTeX tables
+    # ------------------------------------------------------------------
 
     def _latex_table_header(
-        self, caption: str, label: str, descriptor: str, scarcities: list[float]
+        self,
+        caption: str,
+        label: str,
+        descriptor: str,
+        scarcities: list[float],
     ) -> str:
-        columns = "c|" * len(scarcities)
+        columns = "|".join("c" for _ in scarcities)
         scarcity_row = " & ".join(f"{s:.1f}" for s in scarcities)
+        caption_text = f"{caption} ({descriptor})" if caption else descriptor
         return (
             "\\begin{table}[ht]\n\\centering\n"
-            f"\\caption{{{caption} ({descriptor}). "
+            f"\\caption{{{caption_text}. "
             "An entry with - indicates an infeasible instance.}}\n"
             f"\\label{{{label}}}\n"
-            f"\\begin{{tabular}}{{|l|{columns}}}\n"
-            f"\\hline\n\\(RS\\) & {scarcity_row} \\\\ \\hline\n"
+            f"\\begin{{tabular}}{{|l|{columns}|}}\n"
+            "\\hline\n"
+            f"\\(RS\\) & {scarcity_row} \\\\ \\hline\n"
         )
 
-    def _solution_info(self, sol_file: str | None) -> dict | None:
+    def _solution_info(self, sol_file: str | None) -> dict[str, Any] | None:
         if not sol_file:
             return None
-        with open(sol_file, "r") as f:
-            return json.load(f)["SolutionInfo"]
+        try:
+            with open(sol_file, "r") as f:
+                data = json.load(f)
+            return data.get("SolutionInfo")
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
 
     def make_latex_tables(
-        self, instance_id: int, models: list[str], scarcities: list[float]
+        self,
+        instance_id: int,
+        models: list[str],
+        scarcities: list[float],
     ) -> tuple[str, str]:
-        """Make a table of objective and runtime for a given instance and models."""
-        n_proc = self.get_instance(instance_id)["number_of_processes"]
+        instance = self.get_instance(instance_id)
+        if instance is None:
+            raise ValueError(f"Instance {instance_id} not found")
+
+        n_proc = instance["number_of_processes"]
         footer = "\\end{tabular}\n\\end{table}\n"
-        objective = self._latex_table_header(
-                "", "tab:makespan", f"{n_proc} processes", scarcities
-            )
-        runtime = self._latex_table_header(
-                "Runtime", "tab:runtime", f"{n_proc} processes", scarcities
-            )
-        for model_name in models:
-            objective_row = runtime_row = model_name
+
+        objective_table = self._latex_table_header(
+            "Makespan",
+            "tab:makespan",
+            f"{n_proc} processes",
+            scarcities,
+        )
+        runtime_table = self._latex_table_header(
+            "Runtime",
+            "tab:runtime",
+            f"{n_proc} processes",
+            scarcities,
+        )
+
+        for model in models:
+            obj_row = model
+            rt_row = model
+
             for scarcity in scarcities:
-                sol = self.get_solution(instance_id, model_name, scarcity)
-                info = self._solution_info(sol["sol_file"])
+                sol = self.get_solution(instance_id, model, scarcity)
+                info = self._solution_info(sol["sol_file"] if sol else None)
+
                 if info is None:
-                    objective_row += " & ?"; runtime_row += " & ?"
+                    obj_row += " & ?"
+                    rt_row += " & ?"
                     continue
-                status, sol_count = info["Status"], info["SolCount"]
-                if status == GRB.INFEASIBLE or (sol_count == 0 and status == GRB.TIME_LIMIT):
-                    objective_row += " & -"; runtime_row += " & -"
+
+                status = info["Status"]
+                sol_count = info["SolCount"]
+
+                if status == GRB.INFEASIBLE or (
+                    sol_count == 0 and status == GRB.TIME_LIMIT
+                ):
+                    obj_row += " & -"
+                    rt_row += " & -"
                 else:
                     obj = int(info["ObjVal"])
-                    cell = f"\\textbf{{{obj}}}" if status == GRB.OPTIMAL else str(obj)
-                    objective_row += f" & {cell}"; runtime_row += f" & {info['Runtime']:.1f}s"
-            objective += objective_row + " \\\\ \\hline\n"
-            runtime += runtime_row + " \\\\ \\hline\n"
-        return objective + footer, runtime + footer
+                    obj_cell = (
+                        f"\\textbf{{{obj}}}" if status == GRB.OPTIMAL else str(obj)
+                    )
+                    obj_row += f" & {obj_cell}"
+                    rt_row += f" & {info['Runtime']:.1f}s"
+
+            objective_table += obj_row + " \\\\ \\hline\n"
+            runtime_table += rt_row + " \\\\ \\hline\n"
+
+        return objective_table + footer, runtime_table + footer
 
     def make_dataset_latex_tables(
-        self, dataset_id: int, models: list[str], scarcities: list[float]
+        self,
+        dataset_id: int,
+        models: list[str],
+        scarcities: list[float],
     ) -> tuple[str, str]:
-        """Make a table of objective and runtime for all instances in a dataset."""
-        self.cursor.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
-        dataset = self.cursor.fetchone()
+        self.cur.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
+        dataset = self.cur.fetchone()
         if dataset is None:
             raise ValueError(f"Dataset {dataset_id} not found")
-        descriptor = f"{dataset['n_processes']} processes, {dataset['n_instances']} instances"
+
         instance_ids = [row["id"] for row in self.get_dataset(dataset_id)]
-        footer = "\\end{tabular}\n\\end{table}\n"
-        objective = self._latex_table_header(
-            "", "tab:makespan", descriptor, scarcities
+        descriptor = (
+            f"{dataset['n_processes']} processes, {dataset['n_instances']} instances"
         )
-        runtime = self._latex_table_header(
-            "Mean runtime (s)", "tab:runtime", descriptor, scarcities
-        )
-        for model_name in models:
-            objective_row = runtime_row = model_name
+
+        def esc(s: str) -> str:
+            return s.replace("_", "\\_").replace("&", "\\&")
+
+        def avg(xs: list[float], digits: int = 1) -> str:
+            return "-" if not xs else f"{sum(xs) / len(xs):.{digits}f}"
+
+        def feasible(sol: sqlite3.Row | None) -> bool:
+            return bool(
+                sol
+                and (
+                    sol["feasible"]
+                    if sol["feasible"] is not None
+                    else sol["solved"]
+                )
+            )
+
+        def runtime(sol: sqlite3.Row) -> float | None:
+            return sol["solver_time"] if sol["solver_time"] is not None else sol["runtime"]
+
+        # Best objective per instance/scarcity over all selected solvers.
+        best: dict[tuple[int, float], float] = {}
+        for iid in instance_ids:
             for scarcity in scarcities:
-                obj_vals: list[float] = []
-                runtimes: list[float] = []
-                n_missing = 0
+                vals = [
+                    sol["objective_val"]
+                    for model in models
+                    if (sol := self.get_solution(iid, model, scarcity)) is not None
+                    and feasible(sol)
+                    and sol["objective_val"] is not None
+                ]
+                if vals:
+                    best[(iid, scarcity)] = min(vals)
+
+        stats_table = (
+            "\\begin{table}[ht]\n"
+            "\\centering\n"
+            f"\\caption{{Solver statistics ({descriptor}).}}\n"
+            "\\label{tab:solver-statistics}\n"
+            "\\begin{tabular}{|l|r|r|r|r|r|r|}\n"
+            "\\hline\n"
+            "Solver & Feas. & Opt. & Best & Mean time & Mean vars & Mean cons. "
+            "\\\\ \\hline\n"
+        )
+
+        runtime_table = self._latex_table_header(
+            "Mean runtime (s)",
+            "tab:runtime",
+            descriptor,
+            scarcities,
+        )
+
+        for model in models:
+            n_feas = n_opt = n_best = 0
+            times: list[float] = []
+            vars_: list[float] = []
+            cons: list[float] = []
+
+            rt_row = esc(model)
+
+            for scarcity in scarcities:
+                scarcity_times: list[float] = []
+
                 for iid in instance_ids:
-                    sol = self.get_solution(iid, model_name, scarcity)
-                    info = self._solution_info(sol["sol_file"] if sol else None)
-                    if info is None:
-                        n_missing += 1
+                    sol = self.get_solution(iid, model, scarcity)
+                    if sol is None:
                         continue
-                    status, sol_count = info["Status"], info["SolCount"]
-                    if not (status == GRB.INFEASIBLE or (sol_count == 0 and status == GRB.TIME_LIMIT)):
-                        obj_vals.append(int(info["ObjVal"]))
-                        runtimes.append(info["Runtime"])
-                if n_missing == len(instance_ids):
-                    objective_row += " & ?"; runtime_row += " & ?"
-                elif not obj_vals:
-                    objective_row += " & -"; runtime_row += " & -"
-                else:
-                    objective_row += f" & {sum(obj_vals) / len(obj_vals):.0f}"
-                    runtime_row += f" & {sum(runtimes) / len(runtimes):.1f}"
-            objective += objective_row + " \\\\ \\hline\n"
-            runtime += runtime_row + " \\\\ \\hline\n"
-        return objective + footer, runtime + footer
 
+                    t = runtime(sol)
+                    if t is not None:
+                        times.append(float(t))
+                        scarcity_times.append(float(t))
 
+                    if sol["var_count"] is not None:
+                        vars_.append(float(sol["var_count"]))
+                    if sol["const_count"] is not None:
+                        cons.append(float(sol["const_count"]))
 
-if __name__ == "__main__":
-    _db = Database("database.db")
-    print([dict(row) for row in _db.get_instances()])
-    print([dict(row) for row in _db.get_datasets()])
-    print([dict(row) for row in _db.get_dataset(1)])
+                    if feasible(sol):
+                        n_feas += 1
+                    if sol["optimal"]:
+                        n_opt += 1
 
-    _instances = _db.get_instances()
-    _instance_id = 13
-    print(f"Instance {_instances[_instance_id]['id']}: {_instances[_instance_id]['number_of_processes']} processes")
-    _db.add_instance_to_dataset(_instance_id, 1)
-    # after
-    print([dict(row) for row in _db.get_datasets()])
-    print([dict(row) for row in _db.get_dataset(1)])
-    print([dict(row) for row in _db.get_all_instance_to_dataset()])
-    _db.close()
+                    obj = sol["objective_val"]
+                    if (
+                        feasible(sol)
+                        and obj is not None
+                        and (iid, scarcity) in best
+                        and abs(float(obj) - best[(iid, scarcity)]) <= 1e-6
+                    ):
+                        n_best += 1
+
+                rt_row += f" & {avg(scarcity_times)}"
+
+            stats_table += (
+                f"{esc(model)} & {n_feas} & {n_opt} & {n_best} & "
+                f"{avg(times)} & {avg(vars_, 0)} & {avg(cons, 0)} "
+                "\\\\ \\hline\n"
+            )
+            runtime_table += rt_row + " \\\\ \\hline\n"
+
+        footer = "\\end{tabular}\n\\end{table}\n"
+        return stats_table + footer, runtime_table + footer

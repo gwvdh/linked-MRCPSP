@@ -4,158 +4,117 @@ import json
 from math import gcd
 import time
 from .utils import normalize
+from .model import GurobiModel
 
-def step_model(n, T, M, R, E, p, L, r, O, VP, ES=None, LS=None, silent=True, obj="makespan", timeout=600):
-    """
-    n: number of activities
-    T: number of time slots 1,...,T
-    M: number of modes for each activity
-    R: List of resource capacities R[k]
-    E: List of pairs of activity indices (i,j) indicating precedence relations
-    p: List of processing times for each activity i in each mode m p[i][m]
-    L: List of pairs of activity indices (i,j) indicating linked modes
-    r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
-    O: List of last jobs indices of each process
-    ES: Earliest start time for each activity i
-    LS: Latest start time for each activity i
-    """
-    # Normalize processing times
-    p, T, divisor = normalize(p, T)
 
-    # Starting times
-    #earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
-    #latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
+class StepModel(GurobiModel):
+    def initialize_model(self):
+        # Initialize model
+        self.model = gp.Model("step")
+        if self.silent:
+            self.model.setParam('OutputFlag', False)
+        self.model.setParam('TimeLimit', self.timeout)
 
-    # Initialize model
-    model = gp.Model("step")
-    if silent:
-        model.setParam('OutputFlag', False)
-    model.setParam('TimeLimit', timeout)
+        # Step variables
+        z_t = {
+            i: range(self.ES[i], min(self.LS[i] + 1, self.T))
+            for i in range(self.n)
+        }
+        step_sets = [(i, m, t) for i in range(self.n) for m in range(self.M[i]) for t in range(self.T)]
+        self.z = self.model.addVars(step_sets, vtype=GRB.BINARY, name="step")
 
-    # Step variables
-    z_t = {
-        i: range(ES[i], min(LS[i] + 1, T))
-        for i in range(n)
-    }
-    step_sets = [(i, m, t) for i in range(n) for m in range(M[i]) for t in range(T)]
-    z = model.addVars(step_sets, vtype=GRB.BINARY, name="step")
+        # Objective
+        if self.obj == "makespan":
+            self.model.setObjective(gp.quicksum(t * (self.z[self.n-1, m, t] - self.z[self.n-1, m, t-1]) for t in range(1,self.T) for m in range(self.M[self.n-1])), GRB.MINIMIZE)
+        elif self.obj == "flow-time":
+            self.model.setObjective(gp.quicksum((self.z[i, m, t] - self.z[i, m, t-1]) * (t + self.p[i][m] - self.ES[i]) if t > 0 else (self.z[i, m, t]) * (t + self.p[i][m] - self.ES[i]) for i in range(self.n) for m in range(self.M[i]) for t in z_t[i]), GRB.MINIMIZE)
+            #self.model.setObjective(gp.quicksum(self.p[i][m] + gp.quicksum(1 - (self.z[i, m, t]) for t in z_t[i]) for i in range(self.n) for m in range(self.M[i])), GRB.MINIMIZE)
+        elif self.obj == "process-flow-time":
+            self.model.setObjective(gp.quicksum((self.z[i, m, t] - (self.z[i, m, t-1] if t > 0 else 0)) * (t + self.p[i][m] - self.ES[i]) for i in self.O for m in range(self.M[i]) for t in z_t[i]), GRB.MINIMIZE)
 
-    # Objective
-    if obj == "makespan":
-        model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M[n-1])), GRB.MINIMIZE)
-    elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - ES[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - ES[i]) for i in range(n) for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
-    elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - ES[i]) for i in O for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
+        # Constraints
+        # Schedule each job exactly once
+        self.model.addConstrs((gp.quicksum(self.z[i, m, self.LS[i]] for m in range(self.M[i])) == 1 for i in range(self.n)), name="schedule")
+        self.model.addConstrs((gp.quicksum(self.z[i, m, self.T-1] for m in range(self.M[i])) == 1 for i in range(self.n)), name="schedule")
 
-    # Constraints
-    # Schedule each job exactly once
-    model.addConstrs((gp.quicksum(z[i, m, LS[i]] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
-    model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
+        # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
+        self.model.addConstrs((self.z[i, m, t-1] <= self.z[i, m, t] for i in range(self.n) for m in range(self.M[i]) for t in range(1, self.T)), name="started_same_mode")
 
-    # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
-    model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M[i]) for t in range(1, T)), name="started_same_mode")
+        # Precedence relations between jobs (i,j)
+        self.model.addConstrs((
+            gp.quicksum((t + self.p[i][m]) * (self.z[i, m, t] - (self.z[i, m, t-1] if t-1>=0 else 0)) for t in range(self.T) for m in range(self.M[i])) <= 
+            gp.quicksum(t * (self.z[j, m, t] - (self.z[j, m, t-1] if t-1>=0 else 0)) for t in range(self.T) for m in range(self.M[j]))
+            for i,j in self.E), 
+            name="precedence")
 
-    # Precedence relations between jobs (i,j)
-    model.addConstrs((
-        gp.quicksum((t + p[i][m]) * (z[i, m, t] - (z[i, m, t-1] if t-1>=0 else 0)) for t in range(T) for m in range(M[i])) <= 
-        gp.quicksum(t * (z[j, m, t] - (z[j, m, t-1] if t-1>=0 else 0)) for t in range(T) for m in range(M[j]))
-        for i,j in E), 
-        name="precedence")
+        # Resource availability
+        self.model.addConstrs((gp.quicksum(self.r[i][m][k] * (self.z[i, m, t] - (self.z[i, m, max(t - self.p[i][m], 0)] if t-self.p[i][m]>=0 else 0)) for i in range(self.n) for m in range(self.M[i])) <= self.R[k] 
+                     for t in range(self.T) for k in range(len(self.R))), name="resource")
 
-    # Resource availability
-    model.addConstrs((gp.quicksum(r[i][m][k] * (z[i, m, t] - (z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0)) for i in range(n) for m in range(M[i])) <= R[k] 
-                     for t in range(T) for k in range(len(R))), name="resource")
+        # Linked modes of jobs (i,j)
+        self.model.addConstrs((self.z[i, m, self.T-1] == self.z[j, m, self.T-1] for i,j in self.L for m in range(self.M[i])), name="linked")
+        
+        # Earliest start times
+        self.model.addConstrs((self.z[i, m, t] == 0 for i in range(self.n) for m in range(self.M[i]) for t in range(self.ES[i])), name="earliest_start_times")
+        
+        return self.model
 
-    # Linked modes of jobs (i,j)
-    model.addConstrs((z[i, m, T-1] == z[j, m, T-1] for i,j in L for m in range(M[i])), name="linked")
-    
-    # Earliest start times
-    model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(ES[i])), name="earliest_start_times")
-    
-    return model, divisor
+    def visualize(self, filename: str) -> None:
+        return None
 
-def step_model_disaggregated(n, T, M, R, E, p, L, r, O, VP, ES=None, LS=None, silent=True, obj="makespan", timeout=600):
-    """
-    n: number of activities
-    T: number of time slots 1,...,T
-    M: number of modes for each activity
-    R: List of resource capacities R[k]
-    E: List of pairs of activity indices (i,j) indicating precedence relations
-    p: List of processing times for each activity i in each mode m p[i][m]
-    L: List of pairs of activity indices (i,j) indicating linked modes
-    r: List of resource requirements for each activity i in each mode m on resource k r[i][m][k]
-    O: List of last jobs indices of each process
-    ES: Earliest start time for each activity i
-    LS: Latest start time for each activity i
-    """
-    # Normalize processing times
-    p, T, divisor = normalize(p, T)
 
-    # Starting times
-    #earliest_starting_times = get_earliest_start_time(n, T, M, R, E, p, L, r, VP, ES)
-    #latest_starting_times = get_latest_start_time(n, T, M, R, E, p, L, r, VP)
+class StepModelDisaggregated(GurobiModel):
+    def initialize_model(self):
+        # Initialize model
+        self.model = gp.Model("step_disaggregated")
+        if self.silent:
+            self.model.setParam('OutputFlag', False)
+        self.model.setParam('TimeLimit', self.timeout)
 
-    # Initialize model
-    model = gp.Model("step_disaggregated")
-    if silent:
-        model.setParam('OutputFlag', False)
-    model.setParam('TimeLimit', timeout)
+        # Step variables
+        z_t = {
+            i: range(self.ES[i], min(self.LS[i] + 1, self.T))
+            for i in range(self.n)
+        }
+        step_sets = [(i, m, t) for i in range(self.n) for m in range(self.M[i]) for t in range(self.T)]
+        self.z = self.model.addVars(step_sets, vtype=GRB.BINARY, name="step")
 
-    # Step variables
-    z_t = {
-        i: range(ES[i], min(LS[i] + 1, T))
-        for i in range(n)
-    }
-    step_sets = [(i, m, t) for i in range(n) for m in range(M[i]) for t in range(T)]
-    z = model.addVars(step_sets, vtype=GRB.BINARY, name="step")
+        # Objective
+        if self.obj == "makespan":
+            self.model.setObjective(gp.quicksum(t * (self.z[self.n-1, m, t] - self.z[self.n-1, m, t-1]) for t in range(1,self.T) for m in range(self.M[self.n-1])), GRB.MINIMIZE)
+        elif self.obj == "flow-time":
+            self.model.setObjective(gp.quicksum((self.z[i, m, t] - self.z[i, m, t-1]) * (t + self.p[i][m] - self.ES[i]) if t > 0 else (self.z[i, m, t]) * (t + self.p[i][m] - self.ES[i]) for i in range(self.n) for m in range(self.M[i]) for t in z_t[i]), GRB.MINIMIZE)
+            #self.model.setObjective(gp.quicksum(self.p[i][m] + gp.quicksum(1 - (self.z[i, m, t]) for t in z_t[i]) for i in range(self.n) for m in range(self.M[i])), GRB.MINIMIZE)
+        elif self.obj == "process-flow-time":
+            self.model.setObjective(gp.quicksum((self.z[i, m, t] - (self.z[i, m, t-1] if t > 0 else 0)) * (t + self.p[i][m] - self.ES[i]) for i in self.O for m in range(self.M[i]) for t in z_t[i]), GRB.MINIMIZE)
 
-    # Objective
-    if obj == "makespan":
-        model.setObjective(gp.quicksum(t * (z[n-1, m, t] - z[n-1, m, t-1]) for t in range(1,T) for m in range(M[n-1])), GRB.MINIMIZE)
-    elif obj == "flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - z[i, m, t-1]) * (t + p[i][m] - ES[i]) if t > 0 else (z[i, m, t]) * (t + p[i][m] - ES[i]) for i in range(n) for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
-    elif obj == "process-flow-time":
-        model.setObjective(gp.quicksum((z[i, m, t] - (z[i, m, t-1] if t > 0 else 0)) * (t + p[i][m] - ES[i]) for i in O for m in range(M[i]) for t in z_t[i]), GRB.MINIMIZE)
+        # Constraints
+        # Schedule each job exactly once
+        self.model.addConstrs((gp.quicksum(self.z[i, m, self.LS[i]] for m in range(self.M[i])) == 1 for i in range(self.n)), name="schedule")
+        self.model.addConstrs((gp.quicksum(self.z[i, m, self.T-1] for m in range(self.M[i])) == 1 for i in range(self.n)), name="schedule")
 
-    # Constraints
-    # Schedule each job exactly once
-    model.addConstrs((gp.quicksum(z[i, m, LS[i]] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
-    model.addConstrs((gp.quicksum(z[i, m, T-1] for m in range(M[i])) == 1 for i in range(n)), name="schedule")
+        # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
+        self.model.addConstrs((self.z[i, m, t-1] <= self.z[i, m, t] for i in range(self.n) for m in range(self.M[i]) for t in range(1, self.T)), name="started_same_mode")
 
-    # If job is started, at or before $t-1$ in mode $m$, it has also started before $t$ in mode $m$
-    model.addConstrs((z[i, m, t-1] <= z[i, m, t] for i in range(n) for m in range(M[i]) for t in range(1, T)), name="started_same_mode")
+        # Precedence relations between jobs (i,j)
+        self.model.addConstrs((
+            gp.quicksum(self.z[i, m, max(t - self.p[i][m], 0)] if t-self.p[i][m]>=0 else 0 for m in range(self.M[i])) >= 
+            gp.quicksum(self.z[j, m, t] for m in range(self.M[j])) for i,j in self.E for t in range(self.T)), 
+            name="precedence_disaggregated")
 
-    # Precedence relations between jobs (i,j)
-    model.addConstrs((
-        gp.quicksum(z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0 for m in range(M[i])) >= 
-        gp.quicksum(z[j, m, t] for m in range(M[j])) for i,j in E for t in range(T)), 
-        name="precedence_disaggregated")
+        # Resource availability
+        self.model.addConstrs((gp.quicksum(self.r[i][m][k] * (self.z[i, m, t] - (self.z[i, m, max(t - self.p[i][m], 0)] if t-self.p[i][m]>=0 else 0)) for i in range(self.n) for m in range(self.M[i])) <= self.R[k] 
+                     for t in range(self.T) for k in range(len(self.R))), name="resource")
 
-    # Resource availability
-    model.addConstrs((gp.quicksum(r[i][m][k] * (z[i, m, t] - (z[i, m, max(t - p[i][m], 0)] if t-p[i][m]>=0 else 0)) for i in range(n) for m in range(M[i])) <= R[k] 
-                     for t in range(T) for k in range(len(R))), name="resource")
+        # Linked modes of jobs (i,j)
+        self.model.addConstrs((self.z[i, m, self.T-1] == self.z[j, m, self.T-1] for i,j in self.L for m in range(self.M[i])), name="linked")
+        
+        # Earliest start times
+        self.model.addConstrs((self.z[i, m, t] == 0 for i in range(self.n) for m in range(self.M[i]) for t in range(self.ES[i])), name="earliest_start_times")
+        
+        return self.model
 
-    # Linked modes of jobs (i,j)
-    model.addConstrs((z[i, m, T-1] == z[j, m, T-1] for i,j in L for m in range(M[i])), name="linked")
-    
-    # Earliest start times
-    model.addConstrs((z[i, m, t] == 0 for i in range(n) for m in range(M[i]) for t in range(ES[i])), name="earliest_start_times")
-    
-    return model, divisor
+    def visualize(self, filename: str) -> None:
+        return None
 
-if __name__ == "__main__":
-    input = json.load(open("tests/simple.json"))
-    # input = json.load(open("tests/ra-pst.json"))
-    start_time = time.time()
-    model, divisor = step_model(n=input["n"], T=input["T"], M=input["M"], R=input["R"], E=input["E"], p=input["p"], L=input["L"], r=input["r"], VP=None)
-    model.optimize()
-    if model.status == GRB.INFEASIBLE:
-        print("\033[91mModel infeasible\033[0m")
-    else: 
-        print("\033[92mModel feasible\033[0m")
-        print(f"\033[1mRunning time: {time.time() - start_time:.3f} s\033[0m")
-        for var in model.getVars():
-            print(f"{var.varName}: {var.x}") if var.x > 0 else None
-        print(f"Objective: {(model.objVal) * divisor}")
 

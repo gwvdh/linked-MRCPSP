@@ -2,7 +2,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 from gurobipy import GRB
+from ortools.sat.python import cp_model
 from instances.definitions import NetworkType
+import os
 
 
 def visualize_pulse_model(
@@ -549,6 +551,231 @@ def visualize_onoff_model(
         ax_res.set_ylim(0, R[k] * 1.25)
         ax_res.set_title(
             f"Resource {k} utilization", fontweight="bold", fontsize=11
+        )
+        ax_res.set_xlabel("Time (normalized)", fontsize=10)
+        ax_res.set_ylabel("Usage", fontsize=10)
+        ax_res.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        ax_res.legend(fontsize=9)
+        ax_res.grid(axis="y", linestyle="--", alpha=0.4)
+        ax_res.set_axisbelow(True)
+
+    plt.tight_layout(pad=1.5)
+    plt.savefig(f"plots/{filename}.png")
+    plt.close()
+
+
+def visualize_cp_model(
+    model: cp_model.CpModel,
+    solver: cp_model.CpSolver,
+    n: int,
+    T: int,
+    M: list[int],
+    R: list[int],
+    p: list[list[int]],
+    r: list[list[list[int]]],
+    processes,
+    divisor: int = 1,
+    activity_names: list[str] | None = None,
+    filename: str = "schedule_cp",
+    obj_name: str = "Objective",
+) -> None:
+    """
+    Visualizes the solution of a solved OR-Tools CP-SAT model.
+
+    This expects the CP model variables to be named as in cp.py:
+
+        start_{i}_{m}
+        end_{i}_{m}
+        is_present_{i}_{m}
+
+    Notes
+    -----
+    In your Model base class, p and T are normalized during initialization.
+    Therefore this function treats T and p as already normalized.
+    The objective value is multiplied by divisor for display, matching the
+    Gurobi visualizers.
+    """
+    if activity_names is None:
+        activity_names = [f"A{i}" for i in range(n)]
+
+    os.makedirs("plots", exist_ok=True)
+
+    # CPModel passes already-normalized T and p.
+    T_norm = T
+    K = len(R)
+
+    status = solver.ResponseProto().status
+    has_solution = status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+
+    # -------------------------------------------------------------------------
+    # Extract CP-SAT solution values by variable name
+    # -------------------------------------------------------------------------
+    schedule: dict[int, tuple[int, int, int]] = {}
+
+    if has_solution:
+        response = solver.ResponseProto()
+        proto = model.Proto()
+
+        vars_map: dict[str, int] = {}
+
+        for idx, var_proto in enumerate(proto.variables):
+            if idx < len(response.solution):
+                vars_map[var_proto.name] = int(round(response.solution[idx]))
+
+        for i in range(n):
+            for m in range(M[i]):
+                present_name = f"is_present_{i}_{m}"
+                start_name = f"start_{i}_{m}"
+                end_name = f"end_{i}_{m}"
+
+                if vars_map.get(present_name, 0) > 0.5:
+                    t_start = vars_map.get(start_name, 0)
+                    t_end = vars_map.get(end_name, t_start + p[i][m])
+
+                    t_start = max(0, min(t_start, T_norm))
+                    t_end = max(t_start, min(t_end, T_norm))
+
+                    schedule[i] = (m, t_start, t_end)
+                    break
+
+    # -------------------------------------------------------------------------
+    # Colour palette, same idea as the other visualizers
+    # -------------------------------------------------------------------------
+    n_middle = len(processes)
+    group_cmap = plt.colormaps["tab20"]
+    sample_points = np.linspace(0, 1, n_middle + 2, endpoint=False)[1:]
+
+    colors = ["gold"]
+    colors += [group_cmap(pt) for pt in sample_points[:n_middle]]
+    colors.append("crimson")
+
+    # -------------------------------------------------------------------------
+    # Figure layout
+    # -------------------------------------------------------------------------
+    n_plots = 1 + K
+
+    fig, axes = plt.subplots(
+        n_plots,
+        1,
+        figsize=(14, 3 + 2.5 * n_plots),
+        gridspec_kw={"height_ratios": [max(n * 0.5, 3)] + [2] * K},
+    )
+
+    if n_plots == 1:
+        axes = [axes]
+
+    # -------------------------------------------------------------------------
+    # Gantt chart
+    # -------------------------------------------------------------------------
+    ax_gantt = axes[0]
+
+    current_color = 1
+    y = 1
+    yticks: list[int] = []
+    ylabels: list[str] = []
+
+    for _process_idx, process in enumerate(processes):
+        for phase in range(len(process.phases)):
+            if process.network_type == NetworkType.SINGLE and phase >= 1:
+                continue
+
+            if process.network_type == NetworkType.DOUBLE and phase >= 2:
+                continue
+
+            for _job in range(process.phases[phase].number_of_tasks):
+                if y not in schedule:
+                    y += 1
+                    continue
+
+                yticks.append(y)
+                ylabels.append(activity_names[y])
+
+                m, t_start, t_end = schedule[y]
+                width = t_end - t_start
+
+                bar = mpatches.FancyBboxPatch(
+                    (t_start, y - 0.4),
+                    max(width, 0),
+                    0.8,
+                    boxstyle="round,pad=0.03",
+                    facecolor=colors[current_color],
+                    edgecolor="black",
+                    linewidth=0.8,
+                )
+
+                ax_gantt.add_patch(bar)
+
+                ax_gantt.text(
+                    t_start + width / 2,
+                    y,
+                    f"m{m}",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    fontweight="bold",
+                    color="black",
+                )
+
+                y += 1
+
+        current_color += 1
+
+    ax_gantt.set_xlim(0, T_norm)
+    ax_gantt.set_ylim(-0.7, n - 0.3)
+    ax_gantt.set_yticks(yticks)
+    ax_gantt.set_yticklabels(ylabels, fontsize=9)
+    ax_gantt.set_xlabel("Time (normalized)", fontsize=10)
+    ax_gantt.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    ax_gantt.grid(axis="x", linestyle="--", alpha=0.4)
+    ax_gantt.set_axisbelow(True)
+
+    if has_solution:
+        obj_label = f"{obj_name}: {solver.ObjectiveValue() * divisor:.0f}"
+    else:
+        obj_label = "No solution"
+
+    ax_gantt.set_title(
+        f"Schedule – CP-SAT Gantt Chart    ({obj_label})",
+        fontweight="bold",
+        fontsize=13,
+    )
+
+    # -------------------------------------------------------------------------
+    # Resource utilization per time slot
+    # -------------------------------------------------------------------------
+    for k in range(K):
+        ax_res = axes[1 + k]
+        usage = np.zeros(T_norm, dtype=float)
+
+        for i, (m, t_start, t_end) in schedule.items():
+            for t in range(t_start, min(t_end, T_norm)):
+                usage[t] += r[i][m][k]
+
+        ax_res.bar(
+            range(T_norm),
+            usage,
+            color="steelblue",
+            alpha=0.75,
+            edgecolor="black",
+            linewidth=0.4,
+            width=1.0,
+            align="edge",
+        )
+
+        ax_res.axhline(
+            R[k],
+            color="crimson",
+            linewidth=1.5,
+            linestyle="--",
+            label=f"Capacity = {R[k]}",
+        )
+
+        ax_res.set_xlim(0, T_norm)
+        ax_res.set_ylim(0, R[k] * 1.25 if R[k] > 0 else 1)
+        ax_res.set_title(
+            f"Resource {k} utilization",
+            fontweight="bold",
+            fontsize=11,
         )
         ax_res.set_xlabel("Time (normalized)", fontsize=10)
         ax_res.set_ylabel("Usage", fontsize=10)
