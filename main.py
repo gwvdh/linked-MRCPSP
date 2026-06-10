@@ -14,26 +14,28 @@ from instances.definitions import Process
 from instances.generator import generate_instance, get_min_max_demands
 from instances.or_instance import get_or_instance
 from param import ARG_TYPES, DEFAULT_PARAMS, MODELS, SCARCITIES
-from src.continuous import continuous_model
-from src.onoff import onoff_model
-from src.onoff_pulse import onoff_pulse_model, onoff_pulse_model_disaggregated
-from src.pulse import pulse_model, pulse_model_disaggregated
-from src.step import step_model, step_model_disaggregated
+from src.continuous import ContinuousModel
+from src.onoff import OnoffModel
+from src.onoff_pulse import OnoffPulseModel, OnoffPulseModelDisaggregated
+from src.pulse import PulseModel, PulseModelDisaggregated
+from src.step import StepModel, StepModelDisaggregated
+from src.cp import constraint_programming_model
 from src.vis_schedule import (
     visualize_continuous_model,
     visualize_onoff_model,
     visualize_pulse_model,
+    visualize_cp_model,
 )
 
 MODEL_BUILDERS: dict[str, Callable[..., Any]] = {
-    "PDT": pulse_model,
-    "PDDT": pulse_model_disaggregated,
-    "SDT": step_model,
-    "SDDT": step_model_disaggregated,
-    "OODDT": onoff_model,
-    "OOPDT": onoff_pulse_model,
-    "OOPDDT": onoff_pulse_model_disaggregated,
-    "MSEQCT": continuous_model,
+    "PDT": PulseModel,
+    "PDDT": PulseModelDisaggregated,
+    "SDT": StepModel,
+    "SDDT": StepModelDisaggregated,
+    "OODDT": OnoffModel,
+    "OOPDT": OnoffPulseModel,
+    "OOPDDT": OnoffPulseModelDisaggregated,
+    "MSEQCT": ContinuousModel,
 }
 
 
@@ -58,11 +60,8 @@ def parse_xml_files_arg(
 ) -> list[str | list[str]] | None:
     """
     Parse CLI input of the form
-
         --xml-files phase0.xml "phase1a.xml,phase1b.xml"
-
     into
-
         ["phase0.xml", ["phase1a.xml", "phase1b.xml"]]
     """
     if xml_files_arg is None:
@@ -124,7 +123,7 @@ def solve_model_for_instance(
     builder = get_model_builder(solver)
 
     t0 = time.time()
-    model, divisor = builder(
+    model = builder(
         n=instance["n"],
         T=instance["T"],
         M=instance["M"],
@@ -139,76 +138,41 @@ def solve_model_for_instance(
         VP=instance["VP"],
         obj=objective,
         timeout=timeout,
+        processes=processes,
     )
 
     model.update()
     print(
-        f"Model size: {model.NumVars} vars, "
-        f"{model.NumConstrs} constraints, "
-        f"{model.NumNZs} nonzeros"
+        f"Model size: {model.number_of_variables()} vars, "
+        f"{model.number_of_constraints()} constraints, "
+        f"{model.number_of_nonzeros()} nonzeros"
     )
 
-    model.optimize()
+    model.solve()
     runtime = time.time() - t0
 
     sol_file = f"{data_dir}/solution_{solver}_{scarcity:.1f}.json"
     model.write(sol_file)
 
-    infeasible = model.status == GRB.INFEASIBLE
-    timed_out_without_solution = (
-        model.status == GRB.TIME_LIMIT and model.SolCount == 0
-    )
-    interrupted = model.status == GRB.INTERRUPTED
-
-    feasible = not (infeasible or timed_out_without_solution)
-    optimal = model.status == GRB.OPTIMAL
-    finished = not interrupted
-
-    if interrupted:
-        print("Model interrupted.")
-        if model.SolCount > 0:
+    if model.interrupted():
+        print("\033[93mModel interrupted\033[0m")
+        if model.sol_count() > 0:
             print(
-                f"Feasible solution found. Runtime = {runtime:.3f}s, "
-                f"Objective = {model.objVal * divisor:.0f}"
+                f"\033[92mFeasible solution found. \033[0m\033[1mRuntime = {runtime:.3f}s, "
+                f"Objective = {model.get_objective():.0f}\033[0m"
             )
         else:
-            print("No incumbent solution available.")
-    elif infeasible:
-        print("Model infeasible.")
-    elif timed_out_without_solution:
-        print("No solution found within the time limit.")
+            print("\033[91mNo incumbent solution available.")
+    elif not model.is_feasible():
+        print("\033[91mModel infeasible.\033[0m")
+    elif model.is_timed_out():
+        print("\033[91mNo solution found within the time limit.\033[0m")
     else:
         print(
-            f"Feasible solution found. Runtime = {runtime:.3f}s, "
-            f"Objective = {model.objVal * divisor:.0f}"
+            f"\033[92mFeasible solution found. \033[0m\033[1mRuntime = {runtime:.3f}s, "
+            f"Objective = {model.get_objective():.0f}\033[0m"
         )
-
-        vis_kwargs = dict(
-            model=model,
-            n=instance["n"],
-            T=instance["T"],
-            M=instance["M"],
-            R=instance["R"],
-            p=instance["p"],
-            r=instance["r"],
-            processes=processes,
-            divisor=divisor,
-        )
-        if solver in {"PDT", "PDDT", "OOPDT", "OOPDDT"}:
-            visualize_pulse_model(
-                **vis_kwargs,
-                filename=f"Schedule_{solver}_{scarcity:.1f}",
-            )
-        elif solver == "OODDT":
-            visualize_onoff_model(
-                **vis_kwargs,
-                filename=f"Schedule_{solver}_{scarcity:.1f}",
-            )
-        elif solver == "MSEQCT":
-            visualize_continuous_model(
-                **vis_kwargs,
-                filename=f"Schedule_{solver}_{scarcity:.1f}",
-            )
+        model.visualize(f"Schedule_{solver}_{scarcity:.1f}")
 
     db.record_solution(
         instance_id=instance_id,
@@ -217,17 +181,16 @@ def solve_model_for_instance(
         sol_file=sol_file,
         instance_file=instance_file,
         scarcity=scarcity,
-        divisor=divisor,
+        divisor=model.divisor,
         objective=objective,
-        status=model.status,
-        finished=finished,
-        feasible=feasible,
-        optimal=optimal,
-        objective_val=(
-            model.objVal * divisor if feasible and model.SolCount > 0 else None
-        ),
-        best_bound=float(model.ObjBound) if hasattr(model, "ObjBound") else None,
-        mip_gap=float(model.MIPGap) if hasattr(model, "MIPGap") else None,
+        status=model.status(),
+        finished=not model.interrupted(),
+        feasible=model.is_feasible(),
+        optimal=model.is_optimal(),
+        objective_val=model.get_objective() if model.is_feasible() else None,
+        lower_bound=model.lower_bound(),
+        cpm_lb=model.cpm_lb(),
+        solver_time=model.solver_time(),
         runtime=runtime,
     )
 

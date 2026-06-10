@@ -91,8 +91,9 @@ class Database:
                 finished       BOOLEAN,
                 feasible       BOOLEAN,
                 optimal        BOOLEAN,
-                best_bound     REAL,
-                mip_gap        REAL,
+                lower_bound    REAL,
+                cpm_lb         REAL,
+                solver_time    REAL,
                 runtime        REAL,
                 FOREIGN KEY (scenario_id) REFERENCES scenarios (id)
             )
@@ -149,8 +150,9 @@ class Database:
             "finished": "BOOLEAN",
             "feasible": "BOOLEAN",
             "optimal": "BOOLEAN",
-            "best_bound": "REAL",
-            "mip_gap": "REAL",
+            "lower_bound": "REAL",
+            "cpm_lb": "REAL",
+            "solver_time": "REAL",
             "runtime": "REAL",
         }.items():
             self._add_column_if_missing("solution", col, definition)
@@ -336,8 +338,9 @@ class Database:
         finished: bool | None = None,
         feasible: bool | None = None,
         optimal: bool | None = None,
-        best_bound: float | None = None,
-        mip_gap: float | None = None,
+        lower_bound: float | None = None,
+        cpm_lb: float | None = None,
+        solver_time: float | None = None,
         runtime: float | None = None,
     ) -> int:
         self.cur.execute(
@@ -357,11 +360,12 @@ class Database:
                 finished,
                 feasible,
                 optimal,
-                best_bound,
-                mip_gap,
+                lower_bound,
+                cpm_lb,
+                solver_time,
                 runtime
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 instance_id,
@@ -378,8 +382,9 @@ class Database:
                 finished,
                 feasible,
                 optimal,
-                best_bound,
-                mip_gap,
+                lower_bound,
+                cpm_lb,
+                solver_time,
                 runtime,
             ),
         )
@@ -402,8 +407,9 @@ class Database:
         finished: bool | None = None,
         feasible: bool | None = None,
         optimal: bool | None = None,
-        best_bound: float | None = None,
-        mip_gap: float | None = None,
+        lower_bound: float | None = None,
+        cpm_lb: float | None = None,
+        solver_time: float | None = None,
         runtime: float | None = None,
     ) -> None:
         self.cur.execute(
@@ -421,8 +427,9 @@ class Database:
                 finished      = ?,
                 feasible      = ?,
                 optimal       = ?,
-                best_bound    = ?,
-                mip_gap       = ?,
+                lower_bound   = ?,
+                cpm_lb        = ?,
+                solver_time   = ?,
                 runtime       = ?
             WHERE instance_id = ? AND solver = ? AND scarcity = ?
             """,
@@ -438,8 +445,9 @@ class Database:
                 finished,
                 feasible,
                 optimal,
-                best_bound,
-                mip_gap,
+                lower_bound,
+                cpm_lb,
+                solver_time,
                 runtime,
                 instance_id,
                 solver,
@@ -486,8 +494,9 @@ class Database:
         feasible: bool,
         optimal: bool,
         objective_val: float | None,
-        best_bound: float | None,
-        mip_gap: float | None,
+        lower_bound: float | None,
+        cpm_lb: float | None,
+        solver_time: float | None,
         runtime: float | None,
     ) -> int:
         row = self.get_solution(instance_id, solver, scarcity)
@@ -506,8 +515,9 @@ class Database:
             finished=finished,
             feasible=feasible,
             optimal=optimal,
-            best_bound=best_bound,
-            mip_gap=mip_gap,
+            lower_bound=lower_bound,
+            cpm_lb=cpm_lb,
+            solver_time=solver_time,
             runtime=runtime,
         )
         if row is None:
