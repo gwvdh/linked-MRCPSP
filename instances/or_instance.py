@@ -53,7 +53,7 @@ def get_or_instance(
     L: list[list[int]] = []
     O: list[int] = []
 
-    # Connect each phase's first task to its predecessors; link tasks within a phase to share a mode.
+    # Connect each phase's first task to its predecessors. Link tasks within a phase to share a mode.
     for process in processes:
         n_active = process.active_phases()
         phase_last: list[int | None] = [None] * n_active

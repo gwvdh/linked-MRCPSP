@@ -20,12 +20,6 @@ from src.onoff_pulse import OnoffPulseModel, OnoffPulseModelDisaggregated
 from src.pulse import PulseModel, PulseModelDisaggregated
 from src.step import StepModel, StepModelDisaggregated
 from src.cp import ConstraintProgrammingModel
-from src.vis_schedule import (
-    visualize_continuous_model,
-    visualize_onoff_model,
-    visualize_pulse_model,
-    visualize_cp_model,
-)
 
 MODEL_BUILDERS: dict[str, Callable[..., Any]] = {
     "PDT": PulseModel,
@@ -261,94 +255,38 @@ def validate_generator_params(params: dict[str, Any]) -> None:
         raise ValueError("arrival-rate bounds must satisfy 0 < min <= max")
 
 
-def get_solution_rows_for_instance(
+def get_solution_rows(
     db: Database,
-    instance_id: int,
-    force: bool,
+    *,
+    instance_id: int | None = None,
+    dataset_id: int | None = None,
+    force: bool = False,
 ) -> list[Any]:
-    if force:
-        db.cur.execute(
-            """
-            SELECT *
-            FROM solution
-            WHERE instance_id = ?
-            ORDER BY scarcity, solver
-            """,
-            (instance_id,),
-        )
-    else:
-        db.cur.execute(
-            """
-            SELECT *
-            FROM solution
-            WHERE instance_id = ?
-              AND COALESCE(solved, 0) = 0
-            ORDER BY scarcity, solver
-            """,
-            (instance_id,),
-        )
+    if instance_id is not None and dataset_id is not None:
+        raise ValueError("Select either an instance or a dataset")
 
-    return db.cur.fetchall()
+    query = "SELECT solution.* FROM solution"
+    filters = []
+    params = []
 
+    if dataset_id is not None:
+        db.cur.execute("SELECT 1 FROM datasets WHERE id = ?", (dataset_id,))
+        if db.cur.fetchone() is None:
+            raise ValueError(f"Dataset {dataset_id} not found")
+        query += " INNER JOIN instance_dataset ON solution.instance_id = instance_dataset.instance_id"
+        filters.append("instance_dataset.dataset_id = ?")
+        params.append(dataset_id)
+    elif instance_id is not None:
+        filters.append("solution.instance_id = ?")
+        params.append(instance_id)
 
-def get_all_solution_rows(db: Database, force: bool) -> list[Any]:
-    if force:
-        db.cur.execute(
-            """
-            SELECT *
-            FROM solution
-            ORDER BY instance_id, scarcity, solver
-            """
-        )
-    else:
-        db.cur.execute(
-            """
-            SELECT *
-            FROM solution
-            WHERE COALESCE(solved, 0) = 0
-            ORDER BY instance_id, scarcity, solver
-            """
-        )
+    if not force:
+        filters.append("COALESCE(solution.solved, 0) = 0")
+    if filters:
+        query += " WHERE " + " AND ".join(filters)
+    query += " ORDER BY solution.instance_id, solution.scarcity, solution.solver"
 
-    return db.cur.fetchall()
-
-
-def get_solution_rows_for_dataset(
-    db: Database,
-    dataset_id: int,
-    force: bool,
-) -> list[Any]:
-    db.cur.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,))
-    dataset = db.cur.fetchone()
-    if dataset is None:
-        raise ValueError(f"Dataset {dataset_id} not found")
-
-    if force:
-        db.cur.execute(
-            """
-            SELECT solution.*
-            FROM solution
-            INNER JOIN instance_dataset
-                ON solution.instance_id = instance_dataset.instance_id
-            WHERE instance_dataset.dataset_id = ?
-            ORDER BY solution.instance_id, solution.scarcity, solution.solver
-            """,
-            (dataset_id,),
-        )
-    else:
-        db.cur.execute(
-            """
-            SELECT solution.*
-            FROM solution
-            INNER JOIN instance_dataset
-                ON solution.instance_id = instance_dataset.instance_id
-            WHERE instance_dataset.dataset_id = ?
-              AND COALESCE(solution.solved, 0) = 0
-            ORDER BY solution.instance_id, solution.scarcity, solution.solver
-            """,
-            (dataset_id,),
-        )
-
+    db.cur.execute(query, params)
     return db.cur.fetchall()
 
 
@@ -442,7 +380,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             print(f"Error: instance {args.instance_id} not found.")
             return
 
-        rows = get_solution_rows_for_instance(
+        rows = get_solution_rows(
             db=db,
             instance_id=args.instance_id,
             force=args.force,
@@ -462,7 +400,7 @@ def cmd_run_all(args: argparse.Namespace) -> None:
     With --force, all existing solution-table entries are solved again.
     """
     with Database(args.database) as db:
-        rows = get_all_solution_rows(db=db, force=args.force)
+        rows = get_solution_rows(db=db, force=args.force)
 
         solve_solution_rows(
             db=db,
@@ -479,7 +417,7 @@ def cmd_run_dataset(args: argparse.Namespace) -> None:
     are solved again.
     """
     with Database(args.database) as db:
-        rows = get_solution_rows_for_dataset(
+        rows = get_solution_rows(
             db=db,
             dataset_id=args.dataset_id,
             force=args.force,

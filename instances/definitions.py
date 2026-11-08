@@ -3,9 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from itertools import takewhile
-from typing import Optional
-
-import numpy as np
 
 from .xml_parser import RA_PST
 
@@ -25,7 +22,6 @@ class NetworkType(Enum):
 class Task:
     duration: list[int]
     resource: list[int | None]
-    start_time: int = 0
 
 
 class PhaseProfile:
@@ -46,7 +42,6 @@ class PhaseProfile:
 
         self.number_of_tasks = ra_pst.get_number_of_tasks()
         self.number_of_modes = ra_pst.get_number_of_modes()
-        self.number_of_resources = ra_pst.get_number_of_resources()
 
         if len(base_durations) != self.number_of_tasks:
             raise ValueError(
@@ -62,9 +57,6 @@ class PhaseProfile:
         factor = self.resource_ratios.get(node.resource_id, 1.0)
         return self.base_durations[task_id] * factor
 
-    def __str__(self) -> str:
-        return f"PhaseProfile(modes={self.number_of_modes})"
-
 
 class Process:
     """
@@ -76,12 +68,11 @@ class Process:
         network_type: NetworkType,
         phases: list[PhaseProfile],
         start_time: int = 0,
-        variance: float = 0.0,
     ):
         self.network_type = network_type
         self.phases = phases
         self.start_time = start_time
-        self.tasks = self._build_tasks(variance=variance)
+        self.tasks = self._build_tasks()
 
     def active_phases(self) -> int:
         return len(self.network_type.value)
@@ -113,7 +104,7 @@ class Process:
 
         return best_mode
 
-    def _build_tasks(self, variance: float = 0.0) -> list[list[Task]]:
+    def _build_tasks(self) -> list[list[Task]]:
         """
         Build per-phase task chains.
 
@@ -121,7 +112,6 @@ class Process:
         consecutive dummy tasks in the same mode, their durations are merged
         into the current real task.
         """
-        rng = np.random.default_rng()
         all_tasks: list[list[Task]] = []
 
         for phase in self.phases:
@@ -148,26 +138,11 @@ class Process:
                         )
                     )
 
-                    if variance > 0.0:
-                        duration = max(1.0, duration * rng.normal(1.0, variance))
-
                     durations.append(int(duration))
                     resources.append(phase.ra_pst.get_resource(j, m))
 
-                phase_tasks.append(
-                    Task(
-                        duration=durations,
-                        resource=resources,
-                        start_time=self.start_time,
-                    )
-                )
+                phase_tasks.append(Task(duration=durations, resource=resources))
 
             all_tasks.append(phase_tasks)
 
         return all_tasks
-
-    def __str__(self) -> str:
-        return (
-            f"Process(network={self.network_type.name}, "
-            f"start={self.start_time}, phases={len(self.phases)})"
-        )

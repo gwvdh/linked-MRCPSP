@@ -250,10 +250,6 @@ class Database:
         self.cur.execute("SELECT * FROM instances WHERE id = ?", (instance_id,))
         return self.cur.fetchone()
 
-    def get_instances(self) -> list[sqlite3.Row]:
-        self.cur.execute("SELECT * FROM instances")
-        return self.cur.fetchall()
-
     # ------------------------------------------------------------------
     # Scenarios
     # ------------------------------------------------------------------
@@ -318,10 +314,6 @@ class Database:
         )
         return self.cur.fetchone()
 
-    def get_scenario_by_id(self, scenario_id: int) -> sqlite3.Row | None:
-        self.cur.execute("SELECT * FROM scenarios WHERE id = ?", (scenario_id,))
-        return self.cur.fetchone()
-
     # ------------------------------------------------------------------
     # Solutions
     # ------------------------------------------------------------------
@@ -371,7 +363,7 @@ class Database:
                 solver_time,
                 runtime,
                 var_count,
-                const_count,
+                const_count
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -487,13 +479,6 @@ class Database:
         )
         return self.cur.fetchone()
 
-    def get_solutions(self, instance_id: int) -> list[sqlite3.Row]:
-        self.cur.execute(
-            "SELECT * FROM solution WHERE instance_id = ?",
-            (instance_id,),
-        )
-        return self.cur.fetchall()
-
     def record_solution(
         self,
         *,
@@ -598,10 +583,6 @@ class Database:
         self.conn.commit()
         return int(self.cur.lastrowid)
 
-    def get_datasets(self) -> list[sqlite3.Row]:
-        self.cur.execute("SELECT * FROM datasets")
-        return self.cur.fetchall()
-
     def get_dataset(self, dataset_id: int) -> list[sqlite3.Row]:
         self.cur.execute(
             """
@@ -652,23 +633,6 @@ class Database:
             (instance_id, dataset_id),
         )
         self.conn.commit()
-
-    def get_all_instance_to_dataset(self) -> list[sqlite3.Row]:
-        self.cur.execute("SELECT * FROM instance_dataset")
-        return self.cur.fetchall()
-
-    def get_unsolved_solutions_for_dataset(self, dataset_id: int) -> list[sqlite3.Row]:
-        self.cur.execute(
-            """
-            SELECT solution.*
-            FROM solution
-            INNER JOIN instance_dataset
-                ON solution.instance_id = instance_dataset.instance_id
-            WHERE instance_dataset.dataset_id = ? AND NOT solution.solved
-            """,
-            (dataset_id,),
-        )
-        return self.cur.fetchall()
 
     # ------------------------------------------------------------------
     # LaTeX tables
