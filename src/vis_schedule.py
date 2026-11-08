@@ -11,7 +11,7 @@ def visualize_pulse_model(
     model,
     n: int,
     T: int,
-    M: List[int],
+    M: list[int],
     R: list[int],
     p: list[list[int]],
     r: list[list[list[int]]],

@@ -22,8 +22,8 @@ def generate_instance(
     min_resource_ratio: float = 1.0,
     resource_ratio_center: float = 1.5,
     resource_ratio_spread: float = 1.0,
-    arrival_rate: float = 0.7,
-    batch_size: float = 3.0,
+    arrival_rate_min: float = 0.2,
+    arrival_rate_max: float = 0.4,
     verbose: bool = True,
     seed: Optional[int] = None,
 ) -> tuple[list[Process], list[str]]:
@@ -32,12 +32,16 @@ def generate_instance(
     drawing base task durations, and assigning a phase-network structure.
     """
     rng = np.random.default_rng(seed)
+    if arrival_rate_min <= 0 or arrival_rate_max < arrival_rate_min:
+        raise ValueError("arrival rate bounds must satisfy 0 < min <= max")
 
     if xml_files is None:
         phase_pools = [[DEFAULT_XML]] * max_phases
     else:
-        raw = [xml_files[i % len(xml_files)] for i in range(max_phases)]
-        phase_pools = [[x] if isinstance(x, str) else list(x) for x in raw]
+        phase_pools = [
+            [pool] if isinstance(pool, str) else list(pool)
+            for pool in (xml_files[i % len(xml_files)] for i in range(max_phases))
+        ]
 
     all_xml = sorted({path for pool in phase_pools for path in pool})
     ra_pst_by_file = {path: RA_PST(path) for path in all_xml}
@@ -56,56 +60,40 @@ def generate_instance(
         for rid in global_resource_ids
     }
 
-    interarrival_times = rng.exponential(1.0 / arrival_rate, size=number_of_processes)
-    batch_sizes = rng.poisson(batch_size, size=number_of_processes)
+    arrival_rate = rng.uniform(arrival_rate_min, arrival_rate_max)
+    interarrival_times = rng.exponential(1.0 / arrival_rate, size=max(0, number_of_processes - 1))
+    # Generate release times by summing interarrival times, starting at time 0.
+    # The release times are rounded to integers and truncated to the number of processes.
+    release_times = np.concatenate(([0], np.cumsum(interarrival_times).astype(int)))[:number_of_processes]
 
+    # Generate processes (jobs)
     processes: list[Process] = []
-    current_start = 0
-
-    for batch_idx, batch in enumerate(batch_sizes):
-        if batch_idx > 0:
-            current_start += int(interarrival_times[batch_idx])
-
-        for _ in range(int(batch)):
-            if len(processes) >= number_of_processes:
-                break
-
-            phases: list[PhaseProfile] = []
-            for phase_idx in range(max_phases):
-                ra_pst = ra_pst_by_file[rng.choice(phase_pools[phase_idx])]
-                phases.append(
-                    PhaseProfile(
-                        base_durations=[
-                            rng.uniform(min_base_duration, max_base_duration)
-                            for _ in range(ra_pst.get_number_of_tasks())
-                        ],
-                        resource_ratios=resource_ratios,
-                        ra_pst=ra_pst,
-                    )
+    for process_idx, start_time in enumerate(release_times):
+        phases: list[PhaseProfile] = []
+        for phase_idx in range(max_phases):
+            ra_pst = ra_pst_by_file[rng.choice(phase_pools[phase_idx])]
+            phases.append(
+                PhaseProfile(
+                    base_durations=[
+                        rng.uniform(min_base_duration, max_base_duration)
+                        for _ in range(ra_pst.get_number_of_tasks())
+                    ],
+                    resource_ratios=resource_ratios,
+                    ra_pst=ra_pst,
                 )
-
-            network = rng.choice(list(NetworkType))
-            process = Process(
-                network_type=network,
-                phases=phases,
-                start_time=current_start,
             )
-            processes.append(process)
 
-            if verbose:
-                print(
-                    f"{len(processes) - 1}: "
-                    f"structure={network.name}, start={current_start}"
-                )
+        network = rng.choice(list(NetworkType))
+        process = Process(network_type=network, phases=phases, start_time=int(start_time))
+        processes.append(process)
 
-        if len(processes) >= number_of_processes:
-            break
+        if verbose:
+            print(
+                f"{process_idx}: "
+                f"structure={network.name}, start={process.start_time}"
+            )
 
     return processes, global_resource_ids
-
-
-def active_phases(network_type: NetworkType) -> int:
-    return len(network_type.value)
 
 
 def make_phase_timelines(max_phases: int) -> list[DefaultDict[int, DefaultDict[int, int]]]:
@@ -164,7 +152,7 @@ def simulate_extremal(
             modes = process.get_max_resource_demand_mode(resource)
             phase_end: list[int] = []
 
-            for phase_idx in range(active_phases(process.network_type)):
+            for phase_idx in range(process.active_phases()):
                 mode = modes[phase_idx]
                 if mode is None:
                     phase_end.append(phase_end[-1] if phase_end else process.start_time)
@@ -178,77 +166,26 @@ def simulate_extremal(
     return timelines_by_resource
 
 
-def simulate_processes(
-    processes: list[Process],
-    max_phases: int,
-    seed: Optional[int] = None,
-) -> list[PhaseTimeline]:
-    """
-    Simulate processes under randomly selected phase modes.
-    """
-    rng = np.random.default_rng(seed)
-    phase_timelines = make_phase_timelines(max_phases)
-
-    for process in processes:
-        modes = [
-            int(rng.integers(process.phases[i].number_of_modes))
-            for i in range(len(process.phases))
-        ]
-
-        phase_end: list[int] = []
-        for phase_idx in range(active_phases(process.network_type)):
-            phase_end.append(
-                schedule_phase(
-                    process,
-                    phase_idx,
-                    modes[phase_idx],
-                    phase_end,
-                    phase_timelines,
-                )
-            )
-
-    return [dict(sorted(tl.items())) for tl in phase_timelines]
-
-
 def compute_min_demands(
     processes: list[Process],
     max_phases: int,
 ) -> list[dict[int, int]]:
     """
-    Minimum per-phase demand of each resource:
-    a task contributes 1 to resource r iff it uses r in every mode.
+    Minimum per-phase capacity needed to support every generated job mode.
     """
     min_demands = [defaultdict(int) for _ in range(max_phases)]
 
     for process in processes:
-        for phase_idx, phase_tasks in enumerate(process.tasks):
-            if phase_idx >= max_phases:
-                break
-
-            for task in phase_tasks:
-                resources = [r for r in task.resource if r is not None]
-                for res in set(resources):
-                    mandatory = int(all(r == res for r in task.resource))
-                    min_demands[phase_idx][res] = max(
-                        min_demands[phase_idx][res],
-                        mandatory,
-                    )
+        phase_count = min(max_phases, process.active_phases())
+        for phase_idx, phase_tasks in enumerate(process.tasks[:phase_count]):
+            min_demands[phase_idx].update(
+                (resource, 1)
+                for task in phase_tasks
+                for resource in task.resource
+                if resource is not None
+            )
 
     return [dict(d) for d in min_demands]
-
-
-def get_extremal_demands(
-    timelines_by_resource: list[list[PhaseTimeline]],
-) -> list[dict[int, int]]:
-    result = [defaultdict(int) for _ in range(len(timelines_by_resource[0]))]
-
-    for resource_timelines in timelines_by_resource:
-        for phase_idx, phase_timeline in enumerate(resource_timelines):
-            for res_counts in phase_timeline.values():
-                for res, count in res_counts.items():
-                    result[phase_idx][res] = max(result[phase_idx][res], count)
-
-    return [dict(d) for d in result]
 
 
 def get_min_max_demands(
@@ -278,10 +215,9 @@ def get_min_max_demands(
         max_demands[res_idx] = max(combined.values(), default=0)
 
     min_demands_by_phase = compute_min_demands(processes, max_phases)
-    all_min_resources = sorted({r for phase in min_demands_by_phase for r in phase})
     min_demands = {
-        r: max(phase.get(r, 0) for phase in min_demands_by_phase)
-        for r in all_min_resources
+        resource: max(phase.get(resource, 0) for phase in min_demands_by_phase)
+        for resource in resource_indices
     }
 
     print("Min demands:", {r: min_demands.get(r, 0) for r in resource_indices})

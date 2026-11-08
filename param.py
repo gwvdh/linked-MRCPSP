@@ -18,8 +18,8 @@ SCARCITIES = [round(0.1 * s, 1) for s in range(2, 11)]
 
 DEFAULT_PARAMS: dict[str, Any] = {
     "number_of_processes": 2,
-    "arrival_rate": 0.3,
-    "batch_size": 2.0,
+    "arrival_rate_min": 0.2,
+    "arrival_rate_max": 0.4,
     "max_phases": 3,
     "min_base_duration": 2.0,
     "max_base_duration": 5.0,
@@ -31,6 +31,5 @@ DEFAULT_PARAMS: dict[str, Any] = {
 }
 
 ARG_TYPES: dict[str, type] = {
-    "batch_size": float,
     "seed": int,
 }

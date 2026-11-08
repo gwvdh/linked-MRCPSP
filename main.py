@@ -78,7 +78,6 @@ def solve_model_for_instance(
     scarcity: float,
     objective: str,
     min_max: list[tuple[int, int]],
-    max_phases: int,
     timeout: int,
     db: Database,
     instance_id: int,
@@ -90,17 +89,11 @@ def solve_model_for_instance(
     print("-" * 60)
     print(f"Model = {solver}\tScarcity = {scarcity:.1f}")
 
-    max_start_time = int(
-        max(process.start_time + process.max_processing_time() for process in processes)
-    )
-
     instance = get_or_instance(
         processes=processes,
         scarcity=scarcity,
-        max_start_time=max_start_time,
         n_resources=n_resources,
         min_max=min_max,
-        max_phases=max_phases,
     )
 
     data_dir = f"data/{instance_id}"
@@ -261,6 +254,11 @@ def validate_generator_params(params: dict[str, Any]) -> None:
         raise ValueError(
             "min_base_duration * min_resource_ratio must be at least 1.0"
         )
+    if (
+        params["arrival_rate_min"] <= 0
+        or params["arrival_rate_max"] < params["arrival_rate_min"]
+    ):
+        raise ValueError("arrival-rate bounds must satisfy 0 < min <= max")
 
 
 def get_solution_rows_for_instance(
@@ -425,7 +423,6 @@ def solve_solution_rows(
             scarcity=float(scarcity),
             objective=objective,
             min_max=min_max,
-            max_phases=instance["max_phases"],
             timeout=instance["timeout"],
             db=db,
             instance_id=instance_id,

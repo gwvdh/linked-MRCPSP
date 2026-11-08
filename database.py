@@ -35,8 +35,8 @@ class Database:
             CREATE TABLE IF NOT EXISTS instances (
                 id                    INTEGER PRIMARY KEY,
                 number_of_processes   INTEGER,
-                arrival_rate          REAL,
-                batch_size            REAL,
+                arrival_rate_min      REAL,
+                arrival_rate_max      REAL,
                 max_phases            INTEGER,
                 min_base_duration     REAL,
                 max_base_duration     REAL,
@@ -139,6 +139,8 @@ class Database:
 
     def _migrate(self) -> None:
         for col, definition in {
+            "arrival_rate_min": "REAL",
+            "arrival_rate_max": "REAL",
             "seed": "INTEGER",
             "xml_files": "TEXT",
             "global_resource_ids": "TEXT",
@@ -174,8 +176,8 @@ class Database:
     def add_instance(
         self,
         number_of_processes: int,
-        arrival_rate: float,
-        batch_size: float,
+        arrival_rate_min: float,
+        arrival_rate_max: float,
         max_phases: int,
         min_base_duration: float,
         max_base_duration: float,
@@ -195,8 +197,8 @@ class Database:
             """
             INSERT INTO instances (
                 number_of_processes,
-                arrival_rate,
-                batch_size,
+                arrival_rate_min,
+                arrival_rate_max,
                 max_phases,
                 min_base_duration,
                 max_base_duration,
@@ -216,8 +218,8 @@ class Database:
             """,
             (
                 number_of_processes,
-                arrival_rate,
-                batch_size,
+                arrival_rate_min,
+                arrival_rate_max,
                 max_phases,
                 min_base_duration,
                 max_base_duration,
@@ -699,7 +701,7 @@ class Database:
             with open(sol_file, "r") as f:
                 data = json.load(f)
             return data.get("SolutionInfo")
-        except (FileNotFoundError, json.JSONDecodeError):
+        except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
             return None
 
     def make_latex_tables(
@@ -734,28 +736,58 @@ class Database:
 
             for scarcity in scarcities:
                 sol = self.get_solution(instance_id, model, scarcity)
-                info = self._solution_info(sol["sol_file"] if sol else None)
-
-                if info is None:
+                if sol is None:
                     obj_row += " & ?"
                     rt_row += " & ?"
                     continue
 
-                status = info["Status"]
-                sol_count = info["SolCount"]
+                feasible = bool(
+                    sol["feasible"] if sol["feasible"] is not None else sol["solved"]
+                )
+                objective = sol["objective_val"]
+                runtime = (
+                    sol["solver_time"]
+                    if sol["solver_time"] is not None
+                    else sol["runtime"]
+                )
 
-                if status == GRB.INFEASIBLE or (
-                    sol_count == 0 and status == GRB.TIME_LIMIT
-                ):
+                if feasible and objective is not None:
+                    obj_cell = (
+                        f"\\textbf{{{int(objective)}}}"
+                        if sol["optimal"]
+                        else str(int(objective))
+                    )
+                    obj_row += f" & {obj_cell}"
+                    rt_row += f" & {runtime:.1f}s" if runtime is not None else " & ?"
+                    continue
+
+                try:
+                    status = int(sol["status"])
+                except (TypeError, ValueError):
+                    status = None
+
+                if status in (GRB.INFEASIBLE, GRB.TIME_LIMIT) and not feasible:
                     obj_row += " & -"
                     rt_row += " & -"
                 else:
-                    obj = int(info["ObjVal"])
-                    obj_cell = (
-                        f"\\textbf{{{obj}}}" if status == GRB.OPTIMAL else str(obj)
-                    )
-                    obj_row += f" & {obj_cell}"
-                    rt_row += f" & {info['Runtime']:.1f}s"
+                    info = self._solution_info(sol["sol_file"])
+                    if info is None:
+                        obj_row += " & ?"
+                        rt_row += " & ?"
+                    elif info["Status"] == GRB.INFEASIBLE or (
+                        info["SolCount"] == 0 and info["Status"] == GRB.TIME_LIMIT
+                    ):
+                        obj_row += " & -"
+                        rt_row += " & -"
+                    else:
+                        obj = int(info["ObjVal"])
+                        obj_cell = (
+                            f"\\textbf{{{obj}}}"
+                            if info["Status"] == GRB.OPTIMAL
+                            else str(obj)
+                        )
+                        obj_row += f" & {obj_cell}"
+                        rt_row += f" & {info['Runtime']:.1f}s"
 
             objective_table += obj_row + " \\\\ \\hline\n"
             runtime_table += rt_row + " \\\\ \\hline\n"
